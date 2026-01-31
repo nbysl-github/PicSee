@@ -32,6 +32,7 @@ simple_viewer.py
 test*.py
 test_image.png
 开发过程
+hell -NoProfile -Command*
 
 python-*-embed-*.zip
 python-*.exe
