@@ -20,6 +20,19 @@ crash_log.txt
 *.rar
 *.7z
 
+PicSee_*.py
+!PicSee.py
+build.spec
+debug_run.bat
+download_ps.py
+generate_icon.py
+readme.cmd
+run.bat
+simple_viewer.py
+test*.py
+test_image.png
+开发过程
+
 python-*-embed-*.zip
 python-*.exe
 get-pip.py
