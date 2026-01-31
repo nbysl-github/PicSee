@@ -1,0 +1,2268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="resources/photoswipe/photoswipe.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1e1e1e; /* Default dark theme */
+            color: #e0e0e0;
+            font-family: sans-serif;
+            overflow-y: scroll; /* Always show scrollbar to prevent layout shift */
+        }
+
+        .waterfall-container {
+            position: relative;
+            width: 100%;
+            min-height: 1px;
+            /* Add transition for smooth directory switching */
+            transition: opacity 0.2s ease-in-out;
+        }
+
+        .waterfall-container.switching {
+            opacity: 0;
+        }
+
+        .image-item {
+            background-color: #2d2d2d;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            cursor: pointer;
+            /* 仅对缩放效果使用过渡，显式禁用位置属性的过渡以防止“跑动” */
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            /* 强制禁用 left/top 的过渡 */
+            transition-property: transform;
+            will-change: transform;
+        }
+
+        /* 布局定位样式，独立出来以确保优先级 */
+        .waterfall-container:not(.horizontal) {
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .waterfall-container:not(.horizontal) .image-item {
+            position: absolute;
+            margin: 0;
+            /* 确保没有意外的过渡干扰布局 */
+            transition-property: transform; 
+        }
+
+        /* Optimize for Resizing */
+        body.is-resizing .image-item {
+            box-shadow: none !important;
+            transition: none !important;
+        }
+        
+        body.is-resizing .waterfall-container {
+             /* display: none; */ /* Disabled hiding during resize to prevent layout issues */
+             opacity: 0.5; /* Just dim it instead */
+        }
+        
+        body.is-resizing::after {
+            /* content: "调整布局中..."; */ /* Disabled text overlay */
+            display: none;
+        }
+
+        .image-item:hover {
+            transform: scale(1.02);
+            z-index: 1;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
+        .image-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+            opacity: 0; /* Hidden initially for lazy load fade-in */
+            transition: opacity 0.3s;
+        }
+        
+        .image-item img.loaded {
+            opacity: 1;
+        }
+
+        /* Light Theme Support */
+        body.light-theme {
+            background-color: #f8f9fa;
+            color: #212529;
+        }
+        body.light-theme .image-item {
+            background-color: #ffffff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        /* Dark Theme Scrollbar (Default) */
+        ::-webkit-scrollbar {
+            width: 14px; /* match python side width */
+            height: 14px;
+            background-color: #1e1e1e;
+        }
+        ::-webkit-scrollbar-track {
+            background-color: #1e1e1e;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #424242; /* match python side handle color */
+            border-radius: 7px;
+            border: 3px solid #1e1e1e; /* padding effect */
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: #686868;
+        }
+        ::-webkit-scrollbar-corner {
+            background-color: #1e1e1e;
+        }
+
+        /* Light Theme Scrollbar */
+        html.light-theme ::-webkit-scrollbar,
+        body.light-theme ::-webkit-scrollbar {
+            background-color: #f8f9fa;
+        }
+        html.light-theme ::-webkit-scrollbar-track,
+        body.light-theme ::-webkit-scrollbar-track {
+            background-color: #f8f9fa;
+        }
+        html.light-theme ::-webkit-scrollbar-thumb,
+        body.light-theme ::-webkit-scrollbar-thumb {
+            background-color: #ced4da;
+            border: 3px solid #f8f9fa;
+        }
+        html.light-theme ::-webkit-scrollbar-thumb:hover,
+        body.light-theme ::-webkit-scrollbar-thumb:hover {
+            background-color: #adb5bd;
+        }
+
+        /* Horizontal Layout */
+        body.horizontal-mode {
+            overflow-y: hidden;
+            overflow-x: auto;
+            height: 100vh;
+            display: block; /* Changed from flex to prevent unwanted centering */
+            box-sizing: border-box;
+        }
+
+        .waterfall-container.horizontal {
+            display: flex;
+            flex-direction: column; /* Stack rows vertically */
+            flex-wrap: nowrap;
+            height: 100vh; /* Use viewport height to fill precisely */
+            width: max-content; /* Allow container to grow horizontally */
+            min-width: 100%;
+            column-count: auto;
+            column-gap: 0;
+            padding: 10px 20px 10px 10px; /* Top, Right, Bottom, Left */
+            box-sizing: border-box;
+            position: relative; /* For sentinel positioning */
+        }
+        
+        /* Horizontal Mode Row Height is managed by JS computeHorizontalRowLayout */
+        .waterfall-row {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            width: max-content;
+            margin-bottom: 10px;
+        }
+
+        .waterfall-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .waterfall-row .image-item {
+            margin-right: 10px;
+            margin-bottom: 0;
+            width: auto;
+            height: 100%; /* Fill row height */
+            flex: 0 0 auto;
+            content-visibility: visible !important;
+            contain: none !important;
+        }
+
+        .waterfall-row .image-item img {
+            height: 100%;
+            width: auto;
+            display: block;
+        }
+
+        /* PhotoSwipe Customization */
+        .pswp__bg {
+            background: rgba(0, 0, 0, 0.9) !important; /* Translucent background */
+            backdrop-filter: blur(5px); /* Optional: Blur effect */
+        }
+        
+        /* Custom Toolbar Icons */
+        .pswp__button--autoplay {
+            background: none !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pswp__button--autoplay svg {
+            fill: #fff;
+            width: 24px;
+            height: 24px;
+            pointer-events: none;
+        }
+
+        /* Cursor Customization */
+        .pswp__img {
+            cursor: zoom-in !important;
+        }
+        .pswp--zoomed-in .pswp__img {
+            cursor: zoom-in !important;
+        }
+        .pswp--max-zoomed .pswp__img {
+            cursor: zoom-out !important;
+        }
+        .pswp--dragging .pswp__img {
+            cursor: grabbing !important;
+        }
+        
+        @keyframes flashHighlight {
+            0% { outline-color: transparent; box-shadow: none; }
+            10% { outline-color: #FFD700; box-shadow: 0 0 15px rgba(255, 215, 0, 0.8); }
+            80% { outline-color: #FFD700; box-shadow: 0 0 15px rgba(255, 215, 0, 0.8); }
+            100% { outline-color: transparent; box-shadow: none; }
+        }
+
+        .highlight {
+            outline: 4px solid transparent;
+            animation: flashHighlight 2s ease-in-out forwards;
+            z-index: 100;
+        }
+
+        /* Info Panel */
+        .pswp-info-panel {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 300px;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 20px;
+            box-sizing: border-box;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 2000;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+            border-left: 1px solid rgba(255,255,255,0.1);
+        }
+        .pswp-info-panel.visible {
+            transform: translateX(0);
+        }
+        .info-row {
+            margin-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 10px;
+        }
+        .info-label {
+            color: #aaa;
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+        .info-value {
+            font-size: 18px;
+            word-break: break-all;
+        }
+        .light-theme .pswp-info-panel {
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            border-left: 1px solid rgba(0,0,0,0.1);
+        }
+        .light-theme .info-label {
+            color: #666;
+        }
+        .light-theme .info-row {
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="waterfall" class="waterfall-container">
+        <!-- Images will be injected here -->
+    </div>
+
+    <script src="resources/photoswipe/photoswipe.umd.min.js"></script>
+    <script src="resources/photoswipe/photoswipe-lightbox.umd.min.js"></script>
+
+    <script>
+        const TRANSLATIONS = {
+            'zh': {
+                'locate': '在文件列表中定位',
+                'info': '详细信息',
+                'loading': '正在加载...',
+                'error_parsing': '解析信息错误',
+                'dimensions': '尺寸',
+                'filename': '文件名',
+                'filesize': '大小',
+                'width': '宽度',
+                'height': '高度',
+                'created': '创建时间',
+                'modified': '修改时间',
+                'camera_make': '相机厂商',
+                'camera_model': '相机型号',
+                'lens': '镜头',
+                'focal_length': '焦距',
+                'aperture': '光圈',
+                'exposure': '曝光时间',
+                'iso': 'ISO',
+                'capture_time': '拍摄时间'
+            },
+            'en': {
+                'locate': 'Locate in list',
+                'info': 'Detailed Info',
+                'loading': 'Loading...',
+                'error_parsing': 'Error parsing info',
+                'dimensions': 'Dimensions',
+                'filename': 'Filename',
+                'filesize': 'Size',
+                'width': 'Width',
+                'height': 'Height',
+                'created': 'Created',
+                'modified': 'Modified',
+                'camera_make': 'Maker',
+                'camera_model': 'Model',
+                'lens': 'Lens',
+                'focal_length': 'Focal Length',
+                'aperture': 'Aperture',
+                'exposure': 'Exposure',
+                'iso': 'ISO',
+                'capture_time': 'Capture Time'
+            },
+            'ja': {
+                'locate': '一覧で位置を表示',
+                'info': '詳細情報',
+                'loading': '読み込み中...',
+                'error_parsing': '情報の解析エラー',
+                'dimensions': 'サイズ',
+                'filename': 'ファイル名',
+                'filesize': 'サイズ',
+                'width': '幅',
+                'height': '高さ',
+                'created': '作成日時',
+                'modified': '更新日時',
+                'camera_make': 'メーカー',
+                'camera_model': 'モデル',
+                'lens': 'レンズ',
+                'focal_length': '焦点距離',
+                'aperture': '絞り',
+                'exposure': '露出時間',
+                'iso': 'ISO',
+                'capture_time': '撮影日時'
+            },
+            'fr': {
+                'locate': 'Localiser dans la liste',
+                'info': 'Infos détaillées',
+                'loading': 'Chargement...',
+                'error_parsing': 'Erreur d’analyse des informations',
+                'dimensions': 'Dimensions',
+                'filename': 'Nom de fichier',
+                'filesize': 'Taille',
+                'width': 'Largeur',
+                'height': 'Hauteur',
+                'created': 'Créé',
+                'modified': 'Modifié',
+                'camera_make': 'Marque',
+                'camera_model': 'Modèle',
+                'lens': 'Objectif',
+                'focal_length': 'Focale',
+                'aperture': 'Ouverture',
+                'exposure': 'Exposition',
+                'iso': 'ISO',
+                'capture_time': 'Date de prise de vue'
+            },
+            'de': {
+                'locate': 'In Liste finden',
+                'info': 'Details',
+                'loading': 'Laden...',
+                'error_parsing': 'Fehler beim Auslesen der Informationen',
+                'dimensions': 'Abmessungen',
+                'filename': 'Dateiname',
+                'filesize': 'Größe',
+                'width': 'Breite',
+                'height': 'Höhe',
+                'created': 'Erstellt',
+                'modified': 'Geändert',
+                'camera_make': 'Hersteller',
+                'camera_model': 'Modell',
+                'lens': 'Objektiv',
+                'focal_length': 'Brennweite',
+                'aperture': 'Blende',
+                'exposure': 'Belichtungszeit',
+                'iso': 'ISO',
+                'capture_time': 'Aufnahmezeit'
+            }
+        };
+
+        function getLang() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('lang') || 'zh';
+        }
+
+        function normalizeLang(lang) {
+            if (!lang) return 'zh';
+            const s = String(lang).trim().toLowerCase().replace('-', '_');
+            return (s.split('_')[0] || 'zh');
+        }
+
+        let currentLang = normalizeLang(getLang());
+        let t = TRANSLATIONS[currentLang] || TRANSLATIONS['zh'];
+
+        function setLanguagePack(lang, pack) {
+            currentLang = normalizeLang(lang);
+            const fallback = TRANSLATIONS[currentLang] || TRANSLATIONS['zh'];
+            const p = (pack && typeof pack === 'object') ? pack : {};
+            t = {
+                locate: p.waterfall_locate || fallback.locate,
+                info: p.waterfall_info || fallback.info,
+                loading: p.waterfall_loading || fallback.loading,
+                error_parsing: p.waterfall_error_parsing || fallback.error_parsing,
+                dimensions: p.waterfall_dimensions || fallback.dimensions,
+                filename: p.waterfall_filename || fallback.filename,
+                filesize: p.waterfall_filesize || fallback.filesize,
+                width: p.waterfall_width || fallback.width,
+                height: p.waterfall_height || fallback.height,
+                created: p.waterfall_created || fallback.created,
+                modified: p.waterfall_modified || fallback.modified,
+                camera_make: p.waterfall_camera_make || fallback.camera_make,
+                camera_model: p.waterfall_camera_model || fallback.camera_model,
+                lens: p.waterfall_lens || fallback.lens,
+                focal_length: p.waterfall_focal_length || fallback.focal_length,
+                aperture: p.waterfall_aperture || fallback.aperture,
+                exposure: p.waterfall_exposure || fallback.exposure,
+                iso: p.waterfall_iso || fallback.iso,
+                capture_time: p.waterfall_capture_time || fallback.capture_time
+            };
+        }
+
+        window.setLanguagePack = setLanguagePack;
+
+        let allImages = [];
+        let lightbox = null;
+        let slideshowInterval = null;
+    let isSlideshowPlaying = false;
+        let layoutMode = 'vertical'; // 'vertical' or 'horizontal'
+        let horizontalRows = []; // DOM elements for rows
+        let rowCurrentWidths = []; // Current width in pixels for distribution logic
+        // Waterfall info UI - REMOVED per user request
+        let horizontalRowHeight = 0;
+        let horizontalRowCount = 0;
+        let masonryLocked = false;
+        let masonry = {
+            gap: 10,
+            columnCount: 0,
+            columnWidth: 0,
+            columnHeights: [],
+            containerHeight: 0
+        };
+        let perfStats = {
+            verticalBatches: 0,
+            verticalItems: 0,
+            verticalPlaceMsTotal: 0
+        };
+        
+        // --- Core Functions ---
+
+        // Set Theme
+        function setTheme(isDark) {
+            if (isDark) {
+                document.body.classList.remove('light-theme');
+                document.documentElement.classList.remove('light-theme');
+            } else {
+                document.body.classList.add('light-theme');
+                document.documentElement.classList.add('light-theme');
+            }
+        }
+
+        // Set Layout Mode
+        function setLayoutMode(mode) {
+            if (layoutMode === mode) return;
+            layoutMode = mode;
+            
+            const container = document.getElementById('waterfall');
+            if (mode === 'horizontal') {
+                document.body.classList.add('horizontal-mode');
+                container.classList.add('horizontal');
+            } else {
+                document.body.classList.remove('horizontal-mode');
+                container.classList.remove('horizontal');
+            }
+            
+            // Re-render completely when switching modes
+            reRenderImages();
+            if (mode === 'horizontal') {
+                scheduleEagerLoadForVisible();
+            }
+        }
+
+        function reRenderImages(forcedWidth) {
+            if (layoutMode === 'horizontal') {
+                if (allImages.length > 0) {
+                    const imagesToRender = [...allImages];
+                    const rawData = imagesToRender.map(item => {
+                        let path = item.originalPath;
+                        if (item.src && item.src.includes('?')) {
+                             const query = item.src.split('?')[1];
+                             if (query) path += '?' + query;
+                        }
+                        return {
+                            path: path,
+                            w: item.width,
+                            h: item.height
+                        };
+                    });
+                    clearImages();
+                    allImages = [];
+                    appendImages(rawData);
+                }
+            } else {
+                // Vertical Masonry re-layout - 仅重新计算位置，不销毁 DOM
+                resetMasonry();
+                ensureMasonryParamsLocked(forcedWidth);
+                
+                const container = document.getElementById('waterfall');
+                const items = container.getElementsByClassName('image-item');
+                
+                // 确保 pendingItems 和 DOM 元素一一对应
+                for (let i = 0; i < items.length; i++) {
+                    const div = items[i];
+                    const item = pendingItems[i];
+                    if (item) {
+                        placeMasonryItem(div, item);
+                    }
+                }
+                
+                // 更新容器高度
+                const displayHeight = Math.max(0, masonry.containerHeight - masonry.gap);
+                container.style.height = displayHeight + 'px';
+                
+                // 更新哨兵位置
+                if (sentinelElement) {
+                    sentinelElement.style.top = displayHeight + 'px';
+                }
+            }
+        }
+
+        let appWindowWidth = window.innerWidth;
+        let setAppWindowWidthTimer;
+
+        function computeVerticalColumnCount(containerWidth) {
+            // 增强的响应式断点逻辑
+            // 使用更稳定的断点，并根据实际容器宽度决定
+            if (containerWidth < 480) return 1;    // 移动端: 1列
+            if (containerWidth < 768) return 2;    // 平板: 2列
+            if (containerWidth < 1100) return 3;   // 中等宽度: 3列 (从 1024 提高到 1100 以增加稳定性)
+            if (containerWidth < 1600) return 4;   // 大屏: 4列 (从 1440 提高到 1600)
+            return 4;                              // 超大屏: 目前限制最大为 4 列
+        }
+
+        function setAppWindowWidth(width) {
+            if (appWindowWidth === width && width > 0) return;
+            appWindowWidth = width;
+            
+            // 使用防抖处理窗口宽度变化导致的布局重置
+            clearTimeout(setAppWindowWidthTimer);
+            setAppWindowWidthTimer = setTimeout(() => {
+                if (layoutMode === 'vertical') {
+                    const container = document.getElementById('waterfall');
+                    // 优先使用传入的 width，如果为 0 则尝试从容器获取
+                    const currentWidth = width || container.clientWidth;
+                    const effectiveWidth = Math.max(1, currentWidth - 20);
+                    const expectedCols = computeVerticalColumnCount(effectiveWidth);
+                    
+                    // 计算当前的列宽
+                    const gap = masonry.gap;
+                    const expectedColWidth = Math.floor((effectiveWidth - (expectedCols - 1) * gap) / expectedCols);
+                    
+                    // 如果列数或列宽发生变化，则执行重排
+                    // 如果尚未锁定（例如 EXE 启动阶段），也执行重排以确保正确初始化
+                    if (!masonryLocked || expectedCols !== masonry.columnCount || Math.abs(expectedColWidth - masonry.columnWidth) > 1) {
+                        reRenderImages(width);
+                    }
+                }
+            }, 100); // 增加防抖时间到 100ms 以增加稳定性
+        }
+
+        function computeHorizontalRowLayout() {
+            const gap = 10;
+            const padding = 20; // 10px top + 10px bottom
+            const availableH = Math.max(1, window.innerHeight - padding);
+            
+            // 响应式行数逻辑：限制最大为 3 行
+            const rowCount = 3;
+
+            // 根据行数计算每行高度
+            const rowHeight = Math.floor((availableH - (rowCount - 1) * gap) / rowCount);
+
+            return {
+                gap,
+                rowCount,
+                rowHeight: Math.max(30, rowHeight)
+            };
+        }
+
+        function ensureMasonryParamsLocked(forcedWidth) {
+            if (masonryLocked && !forcedWidth) return;
+
+            const container = document.getElementById('waterfall');
+            // 解决 EXE 环境下容器尺寸可能尚未就绪的问题
+            let containerWidth = forcedWidth || container.clientWidth;
+            
+            // 如果容器宽度为0，尝试使用 window.innerWidth 作为一个临时的基准
+            if (containerWidth <= 0) {
+                containerWidth = appWindowWidth || window.innerWidth || 1024;
+            }
+            
+            // 减去内边距 (padding: 10px * 2)
+            const effectiveWidth = Math.max(1, containerWidth - 20);
+            const columnCount = computeVerticalColumnCount(effectiveWidth);
+            const gap = masonry.gap;
+            const columnWidth = Math.floor((effectiveWidth - (columnCount - 1) * gap) / columnCount);
+
+            // 只有当参数确实发生了变化时才更新 masonry 对象
+            // 避免在 incremental rendering 过程中因为 clientWidth 为 0 导致重复重置 columnHeights
+            if (masonry.columnCount !== columnCount || masonry.columnWidth !== columnWidth) {
+                masonry = {
+                    gap,
+                    columnCount,
+                    columnWidth,
+                    columnHeights: new Array(columnCount).fill(0),
+                    containerHeight: 0
+                };
+            }
+            
+            // 只有当获取到了实际的宽度（或强制指定了有效宽度）时，我们才真正“锁定”
+            if (containerWidth > 0) {
+                masonryLocked = true;
+            }
+        }
+
+        function resetMasonry() {
+            masonryLocked = false;
+            masonry = {
+                gap: 10,
+                columnCount: 0,
+                columnWidth: 0,
+                columnHeights: [],
+                containerHeight: 0
+            };
+            perfStats = {
+                verticalBatches: 0,
+                verticalItems: 0,
+                verticalPlaceMsTotal: 0
+            };
+        }
+
+        function placeMasonryItem(div, item) {
+            const columnCount = masonry.columnCount;
+            const gap = masonry.gap;
+            const columnWidth = masonry.columnWidth;
+
+            let targetCol = 0;
+            let minH = masonry.columnHeights[0] ?? 0;
+            for (let c = 1; c < columnCount; c++) {
+                const h = masonry.columnHeights[c] ?? 0;
+                if (h < minH) {
+                    minH = h;
+                    targetCol = c;
+                }
+            }
+
+            const srcW = item.width || item.w || 1;
+            const srcH = item.height || item.h || 1;
+            const scaledH = Math.max(1, Math.round((srcH / srcW) * columnWidth));
+
+            // 考虑容器的内边距偏移 (10px)
+            const x = 10 + targetCol * (columnWidth + gap);
+            const y = 10 + minH;
+
+            // 使用 transform 替代 left/top 可能性能更好，但为了兼容性先保留 left/top
+            // 显式设置样式，确保不触发任何意外的 CSS 过渡
+            div.style.width = columnWidth + 'px';
+            div.style.height = scaledH + 'px';
+            div.style.left = x + 'px';
+            div.style.top = y + 'px';
+
+            masonry.columnHeights[targetCol] = minH + scaledH + gap;
+            masonry.containerHeight = Math.max(masonry.containerHeight, masonry.columnHeights[targetCol] + 10);
+        }
+
+        // --- Info Panel Functions ---
+        let infoPanel = null;
+        
+        function toggleInfoPanel() {
+             // Ensure panel exists and is attached to DOM
+             if (!infoPanel || !infoPanel.isConnected) {
+                 infoPanel = null;
+                 createInfoPanel();
+             }
+             infoPanel.classList.toggle('visible');
+             
+             if (infoPanel.classList.contains('visible')) {
+                 requestExifInfo();
+             }
+        }
+        
+        function createInfoPanel() {
+            infoPanel = document.createElement('div');
+            infoPanel.className = 'pswp-info-panel';
+            if (document.body.classList.contains('light-theme')) {
+                infoPanel.classList.add('light-theme'); // Propagate theme
+            }
+            // Append to pswp container if possible, else body
+            const pswp = lightbox.pswp;
+            if (pswp) {
+                pswp.element.appendChild(infoPanel);
+            } else {
+                document.body.appendChild(infoPanel);
+            }
+            
+            // Close on outside click (optional, handled by bgClickAction usually)
+            infoPanel.addEventListener('mousedown', (e) => e.stopPropagation());
+            infoPanel.addEventListener('pointerdown', (e) => e.stopPropagation());
+        }
+        
+        function requestExifInfo() {
+            const pswp = lightbox.pswp;
+            if (!pswp) return;
+            const item = allImages[pswp.currIndex];
+            if (item && item.originalPath) {
+                // Request info from Python (append timestamp to ensure change detection)
+                document.title = "exif:" + item.originalPath + "|" + Date.now();
+                
+                // Show loading state
+                infoPanel.innerHTML = `<div class="info-row"><div class="info-value">${t['loading']}</div></div>`;
+            }
+        }
+        
+        function showExifInfo(jsonStr) {
+            if (!infoPanel) return;
+            try {
+                const info = JSON.parse(jsonStr);
+                let html = '';
+                
+                const labels = {
+                    'filename': t['filename'],
+                    'filesize': t['filesize'],
+                    'width': t['width'],
+                    'height': t['height'],
+                    'created': t['created'],
+                    'modified': t['modified'],
+                    'camera_make': t['camera_make'],
+                    'camera_model': t['camera_model'],
+                    'lens': t['lens'],
+                    'focal_length': t['focal_length'],
+                    'aperture': t['aperture'],
+                    'exposure': t['exposure'],
+                    'iso': t['iso'],
+                    'capture_time': t['capture_time']
+                };
+                
+                for (const [key, value] of Object.entries(info)) {
+                    if (value && key !== 'format') { // Skip internal format
+                         const label = labels[key] || key;
+                         html += `
+                            <div class="info-row">
+                                <div class="info-label">${label}</div>
+                                <div class="info-value">${value}</div>
+                            </div>
+                         `;
+                    }
+                }
+                
+                // Add dimensions if missing
+                if (!info.width && info.height) {
+                     html += `
+                        <div class="info-row">
+                            <div class="info-label">${t['dimensions']}</div>
+                            <div class="info-value">${info.width} x ${info.height}</div>
+                        </div>
+                     `;
+                }
+                
+                infoPanel.innerHTML = html;
+            } catch (e) {
+                infoPanel.innerHTML = `<div class="info-row"><div class="info-value">${t['error_parsing']}</div></div>`;
+            }
+        }
+
+        let resizeTimer;
+        let savedScrollX = 0;
+        let savedScrollY = 0;
+
+        // Debounce Resize Event
+        window.addEventListener('resize', () => {
+            if (!document.body.classList.contains('is-resizing')) {
+                savedScrollX = window.scrollX;
+                savedScrollY = window.scrollY;
+                document.body.classList.add('is-resizing');
+            }
+            
+            // Clear existing timer
+            clearTimeout(resizeTimer);
+            
+            // Set new timer - 300ms debounce as requested
+            resizeTimer = setTimeout(() => {
+                document.body.classList.remove('is-resizing');
+                
+                // Check if we need to re-layout horizontal rows due to height change
+                if (layoutMode === 'horizontal') {
+                    const layout = computeHorizontalRowLayout();
+                    const currentRows = document.querySelectorAll('.waterfall-row').length;
+                    if (currentRows > 0 && (currentRows !== layout.rowCount || horizontalRowHeight !== layout.rowHeight)) {
+                        reRenderImages();
+                        return;
+                    }
+                } else {
+                    const container = document.getElementById('waterfall');
+                    const containerWidth = Math.max(1, container.clientWidth);
+                    const expectedCols = computeVerticalColumnCount(containerWidth);
+                    
+                    // Always re-calculate if width changed significantly even if columns didn't
+                    if (masonryLocked) {
+                        const widthChanged = Math.abs(containerWidth - (masonry.columnCount * masonry.columnWidth + (masonry.columnCount - 1) * masonry.gap)) > 2;
+                        if (expectedCols !== masonry.columnCount || widthChanged) {
+                            reRenderImages();
+                        }
+                    } else {
+                        reRenderImages();
+                    }
+                }
+
+                // Restore scroll position after layout recalculation
+                requestAnimationFrame(() => {
+                    window.scrollTo(savedScrollX, savedScrollY);
+                });
+            }, 300);
+        });
+
+        // Mouse Wheel Horizontal Scroll
+        window.addEventListener('wheel', (e) => {
+            if (document.body.classList.contains('horizontal-mode')) {
+                // Check if we are not zooming (Ctrl key)
+                if (!e.ctrlKey && e.deltaY !== 0) {
+                    // Try scrolling the body directly since it has overflow-x: auto
+                    document.body.scrollLeft += e.deltaY;
+                    document.documentElement.scrollLeft += e.deltaY; // For some browsers
+                    e.preventDefault();
+                    scheduleEagerLoadForVisible();
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('scroll', () => {
+            scheduleEagerLoadForVisible();
+        }, { passive: true });
+
+        window.addEventListener('resize', () => {
+            scheduleEagerLoadForVisible();
+        }, { passive: true });
+
+        // Toggle Slideshow
+        function toggleSlideshow(btnElement) {
+            isSlideshowPlaying = !isSlideshowPlaying;
+            
+            // Try to find button if not passed (e.g. triggered by keyboard)
+            if (!btnElement) {
+                btnElement = document.querySelector('.pswp__button--autoplay');
+            }
+
+            if (isSlideshowPlaying) {
+                // Start
+                if (btnElement) btnElement.innerHTML = getPauseIcon();
+                lightbox.pswp.next(); // Immediate next
+                slideshowInterval = setInterval(() => {
+                    if (lightbox && lightbox.pswp) {
+                        lightbox.pswp.next();
+                    } else {
+                        stopSlideshow(btnElement);
+                    }
+                }, 2000); // 2 seconds interval
+            } else {
+                // Stop
+                stopSlideshow(btnElement);
+            }
+        }
+
+        function stopSlideshow(btnElement) {
+            isSlideshowPlaying = false;
+            if (slideshowInterval) {
+                clearInterval(slideshowInterval);
+                slideshowInterval = null;
+            }
+            if (btnElement) btnElement.innerHTML = getPlayIcon();
+            // If btnElement is not passed, try to find it
+            const btn = document.querySelector('.pswp__button--autoplay');
+            if (btn) btn.innerHTML = getPlayIcon();
+        }
+
+        function getPlayIcon() {
+            return '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+        }
+
+        function getPauseIcon() {
+            return '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+        }
+
+        // Initialize PhotoSwipe
+        function initPhotoSwipe() {
+            const options = {
+                dataSource: allImages,
+                pswpModule: PhotoSwipe,
+                bgOpacity: 0.9,
+                showHideAnimationType: 'zoom',
+                zoomAnimationDuration: 300,
+                loop: true, // Enable loop for slideshow
+                closeOnVerticalDrag: false, // Prevent accidental close
+                clickToCloseNonZoomable: false, // Prevent accidental close on click
+                // Custom zoom logic to ensure centering on mouse and consistent 2x/3x levels
+                imageClickAction: (point, originalEvent) => {
+                    const pswp = lightbox.pswp;
+                    if (!pswp) return;
+
+                    // Robust point detection: prefer originalEvent client coordinates
+                    let centerPoint = point;
+                    if (originalEvent && typeof originalEvent.clientX === 'number') {
+                        centerPoint = { x: originalEvent.clientX, y: originalEvent.clientY };
+                    }
+                    if (!centerPoint) {
+                        centerPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+                    }
+
+                    const slide = pswp.currSlide;
+                    let currLevel = slide.currZoomLevel;
+                    if (!Number.isFinite(currLevel)) currLevel = slide.zoomLevels?.initial ?? 1;
+                    const initialLevel = slide.zoomLevels?.initial ?? 1;
+                    const maxLevel = pswp.options.maxZoomLevel ?? 4;
+                    
+                    let level2 = initialLevel * 2.0;
+                    let level3 = initialLevel * 3.0;
+                    
+                    if (level3 > maxLevel) level3 = maxLevel;
+                    if (level2 > level3) level2 = level3 * 0.66;
+
+                    let destLevel;
+                    if (currLevel < level2 - 0.1) {
+                        destLevel = level2;
+                    } else if (currLevel < level3 - 0.1) {
+                        destLevel = level3;
+                    } else {
+                        destLevel = initialLevel;
+                    }
+                    destLevel = clampZoom(destLevel, 1, Math.max(1, maxLevel * 2));
+                    pswp.zoomTo(destLevel, centerPoint, 200);
+                },
+                tapAction: (point, originalEvent) => {
+                    const pswp = lightbox.pswp;
+                    if (!pswp) return;
+
+                    // Robust point detection
+                    let centerPoint = point;
+                    if (originalEvent && typeof originalEvent.clientX === 'number') {
+                        centerPoint = { x: originalEvent.clientX, y: originalEvent.clientY };
+                    }
+                    if (!centerPoint) {
+                        centerPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+                    }
+
+                    const slide = pswp.currSlide;
+                    let currLevel = slide.currZoomLevel;
+                    if (!Number.isFinite(currLevel)) currLevel = slide.zoomLevels?.initial ?? 1;
+                    const initialLevel = slide.zoomLevels?.initial ?? 1;
+                    const maxLevel = pswp.options.maxZoomLevel ?? 4;
+                    
+                    let level2 = initialLevel * 2.0;
+                    let level3 = initialLevel * 3.0;
+                    
+                    if (level3 > maxLevel) level3 = maxLevel;
+                    if (level2 > level3) level2 = level3 * 0.66;
+
+                    let destLevel;
+                    if (currLevel < level2 - 0.1) {
+                        destLevel = level2;
+                    } else if (currLevel < level3 - 0.1) {
+                        destLevel = level3;
+                    } else {
+                        destLevel = initialLevel;
+                    }
+                    destLevel = clampZoom(destLevel, 1, Math.max(1, maxLevel * 2));
+                    pswp.zoomTo(destLevel, centerPoint, 200);
+                },
+                bgClickAction: 'close', // Click bg to close
+            };
+
+            lightbox = new PhotoSwipeLightbox(options);
+            
+            // Handle thumbnail animation source
+            lightbox.addFilter('thumbEl', (thumbEl, data, index) => {
+                const el = document.getElementById('img-' + index);
+                if (el) {
+                    return el;
+                }
+                return thumbEl;
+            });
+
+            lightbox.on('afterInit', () => {
+                const pswp = lightbox.pswp;
+                
+                // Smart Cursor Logic
+                pswp.on('zoomPanUpdate', () => {
+                    const slide = pswp.currSlide;
+                    if (!slide) return;
+                    
+                    const currLevel = slide.currZoomLevel;
+                    const initialLevel = slide.zoomLevels?.initial ?? 1;
+                    const maxLevel = pswp.options.maxZoomLevel ?? 4;
+                    
+                    // Logic matching imageClickAction
+                    let level3 = initialLevel * 3.0;
+                    if (level3 > maxLevel) level3 = maxLevel;
+                    
+                    // If we are close to max zoom level (level3), show zoom-out
+                    if (currLevel >= level3 - 0.1) {
+                        pswp.element.classList.add('pswp--max-zoomed');
+                    } else {
+                        pswp.element.classList.remove('pswp--max-zoomed');
+                    }
+                });
+            });
+
+            // Register Custom UI Elements
+            lightbox.on('uiRegister', function() {
+                // Locate Button
+                lightbox.pswp.ui.registerElement({
+                    name: 'locate',
+                    order: 7,
+                    isButton: true,
+                    tagName: 'button',
+                    title: t['locate'],
+                    // Target Icon
+                    html: '<svg aria-hidden="true" class="pswp__icn" viewBox="0 0 32 32" width="32" height="32"><path d="M16 10a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 10a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-18a14 14 0 0 0-14 14c0 7.732 6.268 14 14 14s14-6.268 14-14a14 14 0 0 0-14-14zm0 26a12 12 0 1 1 0-24 12 12 0 0 1 0 24z"/></svg>',
+                    onClick: (event, el) => {
+                         const pswp = lightbox.pswp;
+                         const index = pswp.currIndex;
+                         pswp.close();
+                         // Wait for close animation
+                         // Increased delay to 500ms to ensure PhotoSwipe is fully closed and DOM is stable
+                         setTimeout(() => {
+                             scrollToImage(index);
+                         }, 500);
+                    }
+                });
+
+                // Info Button
+                lightbox.pswp.ui.registerElement({
+                    name: 'info',
+                    order: 8,
+                    isButton: true,
+                    tagName: 'button',
+                    title: t['info'],
+                    // Info Icon
+                    html: '<svg aria-hidden="true" class="pswp__icn" viewBox="0 0 32 32" width="32" height="32"><path d="M16 2a14 14 0 1 0 14 14A14 14 0 0 0 16 2zm0 26a12 12 0 1 1 12-12 12 12 0 0 1-12 12zm-1-11h2v6h-2zm0-6h2v2h-2z"/></svg>',
+                    onClick: (event, el) => {
+                         toggleInfoPanel();
+                    }
+                });
+
+                // Autoplay Button
+                lightbox.pswp.ui.registerElement({
+                    name: 'autoplay',
+                    order: 9,
+                    isButton: true,
+                    tagName: 'button',
+                    html: getPlayIcon(),
+                    onClick: (event, el) => {
+                        toggleSlideshow(el);
+                    }
+                });
+            });
+
+            // Stop slideshow on close
+            lightbox.on('close', () => {
+                stopSlideshow();
+                infoPanel = null;
+            });
+            
+            // Note: wheel zoom is now handled by window event listener at bottom of script
+            
+            // Listen to slide change event
+            lightbox.on('change', () => {
+                const pswp = lightbox.pswp;
+                if (pswp) {
+                    const currIndex = pswp.currIndex;
+                    const item = allImages[currIndex];
+                    if (item && item.originalPath) {
+                        // Use timestamp to force change detection
+                        document.title = "clicked:" + item.originalPath + "|" + currIndex + "|" + Date.now();
+
+                        // If info panel is open, update it
+                        if (infoPanel && infoPanel.classList.contains('visible')) {
+                            // Delay slightly to ensure title change is registered separately
+                            setTimeout(() => {
+                                requestExifInfo();
+                            }, 50);
+                        }
+                    }
+                }
+            });
+            
+            // Stop slideshow on user interaction (optional, but good UX)
+            // lightbox.on('pointerDown', () => stopSlideshow());
+
+            lightbox.init();
+        }
+
+        // Lazy Load Observer
+        const observerOptions = {
+            root: null,
+            rootMargin: '400px', // Increased from 200px to better handle horizontal scrolling
+            threshold: 0
+        };
+
+        const imageLoadCacheKeys = new Set();
+        const imageRetryCounts = new Map();
+        const imageLoadStats = {
+            requested: 0,
+            loaded: 0,
+            error: 0,
+            retries: 0
+        };
+
+        function getImageCacheKeyFromImg(img) {
+            const key = img?.dataset?.cacheKey || img?.dataset?.src || img?.getAttribute?.('data-src') || img?.src || '';
+            return String(key);
+        }
+
+        function appendRetryParam(src, attempt) {
+            const s = String(src || '');
+            if (!s) return s;
+            if (s.startsWith('data:')) return s;
+            const sep = s.includes('?') ? '&' : '?';
+            return s + sep + 'retry=' + attempt + '&t=' + Date.now();
+        }
+
+        const imageObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting || entry.intersectionRatio > 0) {
+                    const img = entry.target;
+                    if (img.dataset.src && !img.src) {
+                        const cacheKey = getImageCacheKeyFromImg(img);
+                        const markLoaded = () => {
+                            img.classList.add('loaded');
+                            if (cacheKey) imageLoadCacheKeys.add(cacheKey);
+                        };
+                        img.addEventListener('load', () => {
+                            imageLoadStats.loaded += 1;
+                            markLoaded();
+                        }, { once: true });
+                        img.addEventListener('error', () => {
+                            imageLoadStats.error += 1;
+                            const key = cacheKey || img.dataset.src;
+                            const prev = imageRetryCounts.get(key) || 0;
+                            if (prev < 2) {
+                                const next = prev + 1;
+                                imageRetryCounts.set(key, next);
+                                imageLoadStats.retries += 1;
+                                setTimeout(() => {
+                                    if (!img.isConnected) return;
+                                    img.src = appendRetryParam(img.dataset.src, next);
+                                }, 120 * next);
+                            } else {
+                                markLoaded();
+                            }
+                        }, { once: true });
+                        imageLoadStats.requested += 1;
+                        img.src = img.dataset.src;
+                        if (img.complete) {
+                            imageLoadStats.loaded += 1;
+                            markLoaded();
+                        }
+                        // Keep data-src for potential reload or reference
+                        // observer.unobserve(img); // Keep observing to potentially unload? No, simple for now.
+                        observer.unobserve(img);
+                    }
+                }
+            });
+        }, observerOptions);
+
+        let eagerLoadScheduled = false;
+        function scheduleEagerLoadForVisible() {
+            if (eagerLoadScheduled) return;
+            eagerLoadScheduled = true;
+            requestAnimationFrame(() => {
+                eagerLoadScheduled = false;
+                
+                const marginX = 800; // Increased margin for better preloading
+                const marginY = 400;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+
+                const candidates = Array.from(document.querySelectorAll('img[data-src]:not([src])')).slice(0, 500);
+                for (const img of candidates) {
+                    const rect = img.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) continue;
+                    const withinX = rect.right >= -marginX && rect.left <= vw + marginX;
+                    const withinY = rect.bottom >= -marginY && rect.top <= vh + marginY;
+                    if (withinX && withinY) {
+                        imageObserver.observe(img);
+                    }
+                }
+            });
+        }
+
+        function getImageLoadStats() {
+            return {
+                mode: layoutMode,
+                requested: imageLoadStats.requested,
+                loaded: imageLoadStats.loaded,
+                error: imageLoadStats.error,
+                retries: imageLoadStats.retries,
+                cacheSize: imageLoadCacheKeys.size,
+                pendingItems: pendingItems.length,
+                renderedItems: currentRenderIndex
+            };
+        }
+
+        // Incremental Rendering State
+        let pendingItems = [];
+        let currentRenderIndex = 0;
+        const BATCH_SIZE = 20; // Reduced from 50 for smoother rendering on CPU
+        let sentinelObserver = null;
+        let sentinelElement = null;
+        let highlightTimer = null; // Global timer for highlight removal
+
+        function scrollToImage(index) {
+            // Check if we need to render more items to reach this index
+            if (index >= currentRenderIndex) {
+                 // Render until we cover this index
+                 // Use a loop to force synchronous rendering of required batches
+                 while (currentRenderIndex <= index && currentRenderIndex < pendingItems.length) {
+                     renderNextBatch();
+                 }
+            }
+
+            // Allow DOM update if needed, but usually renderNextBatch is synchronous enough for element creation
+            // Use setTimeout to ensure layout is settled
+            setTimeout(() => {
+                const el = document.getElementById('img-' + index);
+                if (el) {
+                    const targetEl = el.parentElement; // Highlight the container, not the image (to avoid overflow hidden clipping)
+                    
+                    // Ensure the element is visible in the row if in horizontal mode (usually it is if attached)
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                    
+                    // Clear previous timer to prevent premature removal
+                    if (highlightTimer) {
+                        clearTimeout(highlightTimer);
+                        highlightTimer = null;
+                    }
+
+                    // Remove highlight from ALL elements immediately to reset state
+                    document.querySelectorAll('.highlight').forEach(e => {
+                        e.classList.remove('highlight');
+                    });
+                    
+                    // Force Reflow (flush CSS changes) to ensure animation restarts
+                    void targetEl.offsetWidth; 
+                    
+                    // Add highlight with a delay to ensure scroll has definitely started and rendering is catching up
+                    setTimeout(() => {
+                        targetEl.classList.add('highlight');
+                        
+                        // Optional: Clean up class after animation finishes (2s) to keep DOM clean
+                        // We don't strictly need this for visuals as the animation ends in transparent, 
+                        // but it's good practice.
+                        if (highlightTimer) clearTimeout(highlightTimer);
+                        highlightTimer = setTimeout(() => {
+                            targetEl.classList.remove('highlight');
+                            highlightTimer = null;
+                        }, 2100); // Slightly longer than animation
+                    }, 200); // Increased from 100ms to 200ms for extra stability
+                }
+            }, 50);
+        }
+
+        // Update Images (Called from Python)
+        let updateImagesTimer;
+        function updateImages(imageData) {
+            // Debounce updateImages to prevent multiple rapid calls during directory switching
+            clearTimeout(updateImagesTimer);
+            updateImagesTimer = setTimeout(() => {
+                clearImages();
+                appendImages(imageData);
+            }, 50);
+        }
+
+        function clearImages() {
+            // Clear global image list
+            allImages = [];
+            
+            const container = document.getElementById('waterfall');
+            
+            // Add switching class for smooth transition
+            container.classList.add('switching');
+            
+            // Force scroll to top/left to prevent "upward jump"
+            if (layoutMode === 'horizontal') {
+                window.scrollTo(0, 0);
+                document.body.scrollLeft = 0;
+                document.documentElement.scrollLeft = 0;
+            } else {
+                window.scrollTo(0, 0);
+            }
+            
+            container.innerHTML = ''; // Clear existing
+            
+            // Remove switching class after a small delay to allow content to start rendering
+            setTimeout(() => {
+                container.classList.remove('switching');
+            }, 50);
+
+            // Reset state
+            pendingItems = [];
+            currentRenderIndex = 0;
+            horizontalRows = [];
+            rowCurrentWidths = [];
+            horizontalRowHeight = 0; // Reset height
+            horizontalRowCount = 0; // Reset count
+            resetMasonry();
+            
+            // Re-init lightbox
+            if (lightbox) {
+                lightbox.destroy();
+            }
+            initPhotoSwipe();
+
+            // Setup Sentinel for Infinite Scroll
+            if (sentinelObserver) {
+                sentinelObserver.disconnect();
+            }
+            
+            sentinelElement = document.createElement('div');
+            sentinelElement.id = 'sentinel';
+            sentinelElement.style.height = '20px';
+            sentinelElement.style.width = '100%';
+            sentinelElement.style.pointerEvents = 'none';
+            
+            const sentinelOptions = {
+                root: null,
+                rootMargin: '400px',
+                threshold: 0
+            };
+
+            sentinelObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        renderNextBatch();
+                    }
+                });
+            }, sentinelOptions);
+        }
+
+        function appendImages(imageData) {
+             if (!imageData || imageData.length === 0) return;
+
+             // Re-map for PhotoSwipe data source
+            const newItems = imageData
+                .filter(item => item.w > 0 && item.h > 0)
+                .map((item, index) => ({
+                    src: convertPath(item.src || item.path),
+                    width: item.w,
+                    height: item.h,
+                    index: pendingItems.length + index, // Correct index offset
+                    originalPath: item.path,
+                    path: item.path // Ensure path is available for renderNextBatch
+                }));
+            
+            // Add to global lists
+            if (typeof allImages === 'undefined') {
+                allImages = [];
+            }
+            
+            // Append to allImages
+            // Use push to mutate the array in-place, preserving reference for PhotoSwipe
+            newItems.forEach(item => allImages.push(item));
+            
+            // Update PhotoSwipe dataSource (explicitly update options to be safe)
+            if (lightbox) {
+                 lightbox.options.dataSource = allImages;
+                 // If currently open, also update the active instance
+                 if (lightbox.pswp) {
+                     lightbox.pswp.options.dataSource = allImages;
+                 }
+            }
+
+            // Append to pendingItems
+            const startIndex = pendingItems.length;
+            pendingItems = pendingItems.concat(newItems);
+            
+            // If we are currently "caught up" (currentRenderIndex == old pendingItems.length),
+            // we should try to render more immediately.
+            if (currentRenderIndex >= startIndex) {
+                renderNextBatch();
+            }
+            scheduleEagerLoadForVisible();
+            
+            // Ensure sentinel is at the bottom
+            const container = document.getElementById('waterfall');
+            if (sentinelElement && container.contains(sentinelElement)) {
+                container.appendChild(sentinelElement); // Move to end
+                sentinelObserver.observe(sentinelElement);
+            }
+        }
+
+        function createImageItem(item, index) {
+            const div = document.createElement('div');
+            div.className = 'image-item';
+            div.onclick = () => {
+                document.title = "clicked:" + item.path + "|" + index + "|" + Date.now();
+                openPhotoSwipe(index);
+            };
+            
+            const img = document.createElement('img');
+            img.id = 'img-' + index;
+            // item.src is already converted in appendImages
+            img.dataset.src = item.src;
+            img.dataset.cacheKey = String(item.originalPath || item.path || item.src || '');
+            img.alt = item.path;
+            img.loading = "lazy"; // Native lazy loading
+            
+            const w = item.width || item.w;
+            const h = item.height || item.h;
+            if (w && h) img.style.aspectRatio = `${w} / ${h}`;
+
+            if (imageLoadCacheKeys.has(img.dataset.cacheKey)) {
+                img.src = img.dataset.src;
+                img.classList.add('loaded');
+            }
+            
+            imageObserver.observe(img);
+            div.appendChild(img);
+            return div;
+        }
+
+        function renderNextBatch() {
+            if (currentRenderIndex >= pendingItems.length) {
+                if (sentinelObserver) sentinelObserver.disconnect();
+                return;
+            }
+
+            const container = document.getElementById('waterfall');
+            
+            // 解决 EXE 环境下启动时容器宽度可能为 0 的问题
+            if (layoutMode === 'vertical' && container.clientWidth <= 0) {
+                // 如果宽度还没就绪，延迟 50ms 再试
+                setTimeout(renderNextBatch, 50);
+                return;
+            }
+
+            const endIndex = Math.min(currentRenderIndex + BATCH_SIZE, pendingItems.length);
+            
+            if (layoutMode === 'horizontal') {
+                // Initialize rows if needed
+                if (horizontalRows.length === 0) {
+                     const layout = computeHorizontalRowLayout();
+                     horizontalRowHeight = layout.rowHeight;
+                     horizontalRowCount = layout.rowCount;
+                     for (let i = 0; i < layout.rowCount; i++) {
+                         const row = document.createElement('div');
+                         row.className = 'waterfall-row';
+                         row.style.height = layout.rowHeight + 'px';
+                         container.appendChild(row);
+                         horizontalRows.push(row);
+                         rowCurrentWidths.push(0);
+                     }
+                }
+                
+                // Calculate estimated row height for distribution
+                const estimatedRowHeight = horizontalRowHeight || horizontalRows[0]?.clientHeight || 200;
+
+                for (let i = currentRenderIndex; i < endIndex; i++) {
+                    const item = pendingItems[i];
+                    const index = i; 
+                    const div = createImageItem(item, index);
+                    
+                    // Find shortest row
+                    let minWidth = rowCurrentWidths[0];
+                    let minIdx = 0;
+                    for (let r = 1; r < horizontalRows.length; r++) {
+                        if (rowCurrentWidths[r] < minWidth) {
+                            minWidth = rowCurrentWidths[r];
+                            minIdx = r;
+                        }
+                    }
+                    
+                    horizontalRows[minIdx].appendChild(div);
+                    
+                    // Update width
+                    let aspect = 1.5;
+                    if (item.width && item.height) aspect = item.width / item.height;
+                    else if (item.w && item.h) aspect = item.w / item.h;
+                    
+                    rowCurrentWidths[minIdx] += aspect * estimatedRowHeight;
+                }
+                
+                // Position Sentinel at the end of content
+                if (!sentinelElement.parentNode || sentinelElement.parentNode !== container) {
+                    container.appendChild(sentinelElement);
+                }
+                // Ensure sentinel is positioned absolutely to the right
+                sentinelElement.style.position = 'absolute';
+                sentinelElement.style.right = '-20px';
+                sentinelElement.style.top = '0';
+                sentinelElement.style.height = '100%';
+                sentinelElement.style.width = '20px';
+                sentinelObserver.observe(sentinelElement);
+                scheduleEagerLoadForVisible();
+                
+            } else {
+                ensureMasonryParamsLocked();
+                const t0 = performance.now();
+                const fragment = document.createDocumentFragment();
+                
+                for (let i = currentRenderIndex; i < endIndex; i++) {
+                    const item = pendingItems[i];
+                    const index = i;
+                    const div = createImageItem(item, index);
+                    placeMasonryItem(div, item);
+                    fragment.appendChild(div);
+                }
+                if (!sentinelElement.parentNode || sentinelElement.parentNode !== container) {
+                    container.appendChild(sentinelElement);
+                }
+                container.appendChild(fragment);
+                
+                // 设置容器高度，减去最后一个多余的 gap
+                const displayHeight = Math.max(0, masonry.containerHeight - masonry.gap);
+                container.style.height = displayHeight + 'px';
+
+                sentinelElement.style.position = 'absolute';
+                sentinelElement.style.left = '0';
+                sentinelElement.style.right = '0';
+                sentinelElement.style.top = displayHeight + 'px';
+                sentinelElement.style.height = '1px';
+                sentinelElement.style.width = '100%';
+                
+                sentinelObserver.observe(sentinelElement);
+
+                const t1 = performance.now();
+                perfStats.verticalBatches += 1;
+                perfStats.verticalItems += (endIndex - currentRenderIndex);
+                perfStats.verticalPlaceMsTotal += (t1 - t0);
+            }
+
+            currentRenderIndex = endIndex;
+        }
+
+        // Image Rotated (Called from Python)
+        function imageRotated(path, w, h, timestamp) {
+            // Find image by path (try both exact match and URL decoded match)
+            let index = allImages.findIndex(img => img.originalPath === path);
+            
+            // If not found, try to handle potential path differences (e.g. casing on Windows)
+            if (index === -1) {
+                 const lowerPath = path.toLowerCase();
+                 index = allImages.findIndex(img => img.originalPath.toLowerCase() === lowerPath);
+            }
+
+            if (index === -1) {
+                console.error("Image not found in list:", path);
+                return;
+            }
+
+            // Update data
+            const item = allImages[index];
+            item.width = w;
+            item.height = h;
+            
+            // Update src with new timestamp
+            // Remove old timestamp if exists
+            let newSrc = item.src;
+            if (newSrc.includes('?')) {
+                newSrc = newSrc.split('?')[0];
+            }
+            newSrc += '?v=' + timestamp;
+            item.src = newSrc;
+            
+            // Update Thumbnail
+            const imgEl = document.getElementById('img-' + index);
+            if (imgEl) {
+                // Force reload by setting src to empty first (sometimes helps with cache)
+                // But better just set new src
+                imgEl.src = newSrc;
+                
+                imgEl.style.aspectRatio = `${w} / ${h}`;
+                if (layoutMode === 'vertical') {
+                    reRenderImages();
+                }
+            }
+
+            // Update Lightbox if open
+            if (lightbox && lightbox.pswp) {
+                const pswp = lightbox.pswp;
+                
+                // Update item in PhotoSwipe
+                if (pswp.currIndex === index) {
+                    // Force update current slide
+                    const slide = pswp.currSlide;
+                    // Update slide data
+                    slide.data.src = newSrc;
+                    slide.data.width = w;
+                    slide.data.height = h;
+                    
+                    // Refresh content
+                    if (slide.content && slide.content.element) {
+                        const img = slide.content.element;
+                        if (img.tagName === 'IMG') {
+                            img.src = newSrc;
+                            // Reset style to ensure new dimensions are respected
+                            img.style.width = 'auto';
+                            img.style.height = 'auto';
+                        }
+                    }
+                    
+                    // Reload content to ensure dimensions are correct
+                    slide.content.load(true); 
+                    
+                    // Update zoom level to fit new dimensions
+                    // pswp.zoomTo(pswp.initialZoomLevel, {x:0,y:0}, 0);
+                } else {
+                    // Update data for other slides
+                    const item = lightbox.pswp.options.dataSource[index];
+                    if (item) {
+                        item.src = newSrc;
+                        item.width = w;
+                        item.height = h;
+                    }
+                }
+            }
+        }
+        
+        // Helper to convert Windows path to file URL
+        function convertPath(path) {
+            if (!path) return '';
+            if (/^(data:|https?:|file:)/i.test(path)) return path;
+            // Split query params if any
+            let parts = path.split('?');
+            let filePath = parts[0].replace(/\\/g, '/');
+            let query = parts.length > 1 ? '?' + parts[1] : '';
+            
+            // Encode the file path part to handle special characters (Chinese, etc.)
+            // encodeURI preserves : / and other URI characters but encodes Unicode
+            return 'file:///' + encodeURI(filePath) + query;
+        }
+
+        function getVerticalPerfStats() {
+            const avgPerBatch = perfStats.verticalBatches > 0 ? (perfStats.verticalPlaceMsTotal / perfStats.verticalBatches) : 0;
+            const avgPerItem = perfStats.verticalItems > 0 ? (perfStats.verticalPlaceMsTotal / perfStats.verticalItems) : 0;
+            return {
+                verticalBatches: perfStats.verticalBatches,
+                verticalItems: perfStats.verticalItems,
+                verticalPlaceMsTotal: perfStats.verticalPlaceMsTotal,
+                verticalAvgPlaceMsPerBatch: avgPerBatch,
+                verticalAvgPlaceMsPerItem: avgPerItem
+            };
+        }
+
+        async function runHorizontalRowLimitUnitTest() {
+            function makeDataUrl(w, h, color, label) {
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${color}"/><text x="10" y="30" font-size="24" fill="#fff">${label}</text></svg>`;
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            }
+
+            function genItems(count) {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const w = 400;
+                    const h = 300;
+                    items.push({
+                        src: makeDataUrl(w, h, '#444', `test-${i}`),
+                        path: `test-${i}`,
+                        w,
+                        h
+                    });
+                }
+                return items;
+            }
+
+            // Set to horizontal mode
+            setLayoutMode('horizontal');
+            updateImages(genItems(20));
+            await new Promise(r => setTimeout(r, 100));
+
+            const rows = document.querySelectorAll('.waterfall-row');
+            const rowCount = rows.length;
+            
+            // Verify each row has items and they are within the row height
+            let rowsBalanced = true;
+            rows.forEach(row => {
+                if (row.children.length === 0) rowsBalanced = false;
+            });
+
+            return {
+                rowCount: rowCount,
+                success: rowCount === 3 && rowsBalanced,
+                message: rowCount === 3 ? "Successfully restricted to 3 rows" : `Failed: found ${rowCount} rows`
+            };
+        }
+
+        function startHorizontalRowLimitUnitTest(testId) {
+            const id = String(testId || ('hrl-' + Date.now().toString(36)));
+            window.__picseeUnitTests.results[id] = { status: 'running', startedAt: Date.now() };
+            (async () => {
+                try {
+                    const result = await runHorizontalRowLimitUnitTest();
+                    window.__picseeUnitTests.results[id] = { status: 'done', finishedAt: Date.now(), result };
+                } catch (e) {
+                    window.__picseeUnitTests.results[id] = { status: 'error', finishedAt: Date.now(), error: String(e) };
+                }
+            })();
+            return id;
+        }
+
+        function getHorizontalRowLimitUnitTestResult(testId) {
+            return (window.__picseeUnitTests && window.__picseeUnitTests.results && window.__picseeUnitTests.results[testId]) || null;
+        }
+
+        async function runVerticalPerfBenchmark() {
+            function makeDataUrl(w, h, color, label) {
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${color}"/><text x="10" y="30" font-size="24" fill="#fff">${label}</text></svg>`;
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            }
+
+            function genItems(count, startIndex) {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const w = 600 + ((i + startIndex) % 5) * 120;
+                    const h = 400 + ((i + startIndex) % 7) * 90;
+                    const hue = ((i + startIndex) * 37) % 360;
+                    const color = `hsl(${hue} 70% 45%)`;
+                    items.push({
+                        src: makeDataUrl(w, h, color, String(i + startIndex)),
+                        path: `data:${i + startIndex}`,
+                        w,
+                        h
+                    });
+                }
+                return items;
+            }
+
+            updateImages(genItems(360, 0));
+            while (currentRenderIndex < pendingItems.length) {
+                renderNextBatch();
+            }
+            await new Promise(r => requestAnimationFrame(() => r()));
+            const incremental = getVerticalPerfStats();
+
+            const t0 = performance.now();
+            reRenderImages();
+            while (currentRenderIndex < pendingItems.length) {
+                renderNextBatch();
+            }
+            await new Promise(r => requestAnimationFrame(() => r()));
+            const t1 = performance.now();
+
+            return {
+                incremental,
+                fullRelayoutMs: t1 - t0,
+                fullRelayoutItems: pendingItems.length
+            };
+        }
+
+        async function runHorizontalConstraintsUnitTest() {
+            function makeDataUrl(w, h, color, label) {
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${color}"/><text x="10" y="30" font-size="24" fill="#fff">${label}</text></svg>`;
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            }
+
+            function genItems(count, startIndex) {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const ratio = 1.35 + (((i + startIndex) % 7) * 0.05);
+                    const h = 600;
+                    const w = Math.round(h * ratio);
+                    const hue = ((i + startIndex) * 53) % 360;
+                    const color = `hsl(${hue} 70% 45%)`;
+                    items.push({
+                        src: makeDataUrl(w, h, color, String(i + startIndex)),
+                        path: `data:${i + startIndex}`,
+                        w,
+                        h
+                    });
+                }
+                return items;
+            }
+
+            setLayoutMode('horizontal');
+            updateImages(genItems(240, 0));
+            while (currentRenderIndex < pendingItems.length) {
+                renderNextBatch();
+            }
+            await new Promise(r => requestAnimationFrame(() => r()));
+
+            const rows = Array.from(document.querySelectorAll('.waterfall-row'));
+            const rowHeights = rows.map(r => r.getBoundingClientRect().height);
+            const maxItemHeight = Math.max(
+                0,
+                ...Array.from(document.querySelectorAll('.waterfall-row .image-item')).slice(0, 200).map(el => el.getBoundingClientRect().height)
+            );
+
+            const visibleCounts = rows.slice(0, Math.min(6, rows.length)).map(row => {
+                const items = Array.from(row.querySelectorAll('.image-item')).slice(0, 50);
+                let count = 0;
+                for (const el of items) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.left >= 0 && rect.right <= window.innerWidth) count++;
+                }
+                return count;
+            });
+
+            const minVisible = visibleCounts.length ? Math.min(...visibleCounts) : 0;
+            const maxRowHeight = rowHeights.length ? Math.max(...rowHeights) : 0;
+
+            return {
+                pass: minVisible >= 4 && maxItemHeight <= 200.5 && maxRowHeight <= 200.5,
+                viewport: { w: window.innerWidth, h: window.innerHeight },
+                rowCount: rows.length,
+                maxRowHeight,
+                maxItemHeight,
+                minFullyVisibleItemsPerRow: minVisible,
+                sampleVisibleCounts: visibleCounts.slice(0, 6)
+            };
+        }
+
+        async function runVerticalToHorizontalRenderUnitTest() {
+            function makeDataUrl(w, h, color, label) {
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${color}"/><text x="10" y="30" font-size="24" fill="#fff">${label}</text></svg>`;
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            }
+
+            function genItems(count, startIndex) {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const ratio = 1.25 + (((i + startIndex) % 9) * 0.07);
+                    const h = 600;
+                    const w = Math.round(h * ratio);
+                    const hue = ((i + startIndex) * 47) % 360;
+                    const color = `hsl(${hue} 70% 45%)`;
+                    items.push({
+                        src: makeDataUrl(w, h, color, String(i + startIndex)),
+                        path: `data:${i + startIndex}`,
+                        w,
+                        h
+                    });
+                }
+                return items;
+            }
+
+            async function waitFor(predicate, timeoutMs) {
+                const deadline = performance.now() + timeoutMs;
+                while (performance.now() < deadline) {
+                    if (predicate()) return true;
+                    await new Promise(r => setTimeout(r, 16));
+                }
+                return false;
+            }
+
+            setLayoutMode('vertical');
+            updateImages(genItems(120, 0));
+            while (currentRenderIndex < pendingItems.length && currentRenderIndex < 60) {
+                renderNextBatch();
+            }
+            await new Promise(r => requestAnimationFrame(() => r()));
+
+            const loadedBeforeOk = await waitFor(() => document.querySelectorAll('#waterfall img.loaded').length >= 4, 5000);
+            const beforeCount = document.querySelectorAll('#waterfall .image-item').length;
+
+            const t0 = performance.now();
+            setLayoutMode('horizontal');
+
+            const rowsOk = await waitFor(() => document.querySelectorAll('.waterfall-row').length > 0, 3000);
+            const itemsOk = await waitFor(() => document.querySelectorAll('.waterfall-row .image-item').length > 0, 3000);
+            const loadedAfterOk = await waitFor(() => document.querySelectorAll('.waterfall-row img.loaded').length >= 4, 5000);
+            const visibleLoadedOk = await waitFor(() => {
+                const imgs = Array.from(document.querySelectorAll('.waterfall-row img')).slice(0, 200).filter(img => {
+                    const rect = img.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight;
+                });
+                return imgs.length > 0 && imgs.every(img => img.classList.contains('loaded'));
+            }, 5000);
+            const t1 = performance.now();
+
+            const rows = Array.from(document.querySelectorAll('.waterfall-row'));
+            const firstRow = rows[0] || null;
+            const firstRowVisible = firstRow
+                ? Array.from(firstRow.querySelectorAll('img')).slice(0, 50).filter(img => {
+                    const rect = img.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth;
+                })
+                : [];
+            const firstRowVisibleLoaded = firstRowVisible.filter(img => img.classList.contains('loaded'));
+
+            const switchMs = t1 - t0;
+            const pass = Boolean(
+                loadedBeforeOk &&
+                beforeCount > 0 &&
+                rowsOk &&
+                itemsOk &&
+                loadedAfterOk &&
+                visibleLoadedOk &&
+                firstRowVisibleLoaded.length > 0 &&
+                firstRowVisibleLoaded.length === firstRowVisible.length &&
+                switchMs <= 500
+            );
+
+            return {
+                pass,
+                viewport: { w: window.innerWidth, h: window.innerHeight },
+                beforeItemCount: beforeCount,
+                afterRowCount: rows.length,
+                switchMs,
+                loadedBeforeOk,
+                loadedAfterOk,
+                visibleLoadedOk,
+                firstRowVisibleLoadedCount: firstRowVisibleLoaded.length,
+                firstRowVisibleTotalCount: firstRowVisible.length
+            };
+        }
+
+        async function runHorizontalPerfBenchmark(testId) {
+            function makeDataUrl(w, h, color, label) {
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${color}"/><text x="10" y="30" font-size="24" fill="#fff">${label}</text></svg>`;
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            }
+
+            function genItems(count) {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const w = 400 + (i % 5) * 50;
+                    const h = 300;
+                    items.push({
+                        src: makeDataUrl(w, h, '#444', `perf-${i}`),
+                        path: `perf-${i}`,
+                        w,
+                        h
+                    });
+                }
+                return items;
+            }
+
+            setLayoutMode('horizontal');
+            updateImages(genItems(500)); // Large dataset for performance test
+            
+            // Wait for initial render
+            await new Promise(r => setTimeout(r, 500));
+
+            const results = {
+                fps: [],
+                memory: [],
+                scrollSuccess: false
+            };
+
+            let frameCount = 0;
+            let lastTime = performance.now();
+            let monitoring = true;
+
+            function measureFPS() {
+                if (!monitoring) return;
+                frameCount++;
+                const now = performance.now();
+                if (now - lastTime >= 1000) {
+                    results.fps.push(Math.round((frameCount * 1000) / (now - lastTime)));
+                    frameCount = 0;
+                    lastTime = now;
+                    if (window.performance && window.performance.memory) {
+                        results.memory.push(Math.round(window.performance.memory.usedJSHeapSize / 1024 / 1024));
+                    }
+                }
+                requestAnimationFrame(measureFPS);
+            }
+
+            measureFPS();
+
+            // Simulate horizontal scrolling
+            const container = document.body;
+            const scrollDistance = 5000;
+            const scrollStep = 100;
+            let currentScroll = 0;
+
+            for (let i = 0; i < scrollDistance / scrollStep; i++) {
+                currentScroll += scrollStep;
+                window.scrollTo(currentScroll, 0);
+                await new Promise(r => setTimeout(r, 50));
+            }
+
+            monitoring = false;
+            results.scrollSuccess = true;
+            results.avgFPS = results.fps.length ? results.fps.reduce((a, b) => a + b, 0) / results.fps.length : 0;
+            results.maxMemoryMB = results.memory.length ? Math.max(...results.memory) : 0;
+
+            if (window.__picseeUnitTests) {
+                window.__picseeUnitTests.results[testId] = results;
+            }
+            return results;
+        }
+
+        function startHorizontalPerfBenchmark(testId) {
+            if (!window.__picseeUnitTests) window.__picseeUnitTests = { results: {} };
+            runHorizontalPerfBenchmark(testId);
+            return testId;
+        }
+
+        function getHorizontalPerfBenchmarkResult(testId) {
+            return (window.__picseeUnitTests && window.__picseeUnitTests.results && window.__picseeUnitTests.results[testId]) || null;
+        }
+
+        async function runHorizontalRightEdgeRenderUnitTest() {
+            function makeDataUrl(w, h, color, label) {
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="${color}"/><text x="10" y="30" font-size="24" fill="#fff">${label}</text></svg>`;
+                return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            }
+
+            function genItems(count, startIndex) {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const ratio = 1.2 + (((i + startIndex) % 11) * 0.08);
+                    const h = 600;
+                    const w = Math.round(h * ratio);
+                    const hue = ((i + startIndex) * 33) % 360;
+                    const color = `hsl(${hue} 70% 45%)`;
+                    items.push({
+                        src: makeDataUrl(w, h, color, String(i + startIndex)),
+                        path: `data:${i + startIndex}`,
+                        w,
+                        h
+                    });
+                }
+                return items;
+            }
+
+            async function waitFor(predicate, timeoutMs) {
+                const deadline = performance.now() + timeoutMs;
+                while (performance.now() < deadline) {
+                    if (predicate()) return true;
+                    await new Promise(r => setTimeout(r, 16));
+                }
+                return false;
+            }
+
+            setLayoutMode('horizontal');
+            updateImages(genItems(720, 0));
+            while (currentRenderIndex < pendingItems.length && currentRenderIndex < 320) {
+                renderNextBatch();
+            }
+            await new Promise(r => requestAnimationFrame(() => r()));
+
+            const sc = document.scrollingElement || document.documentElement;
+            const beforeScrollLeft = Number(sc.scrollLeft || 0);
+            sc.scrollLeft = sc.scrollWidth;
+            document.body.scrollLeft = document.body.scrollWidth;
+            document.documentElement.scrollLeft = document.documentElement.scrollWidth;
+            scheduleEagerLoadForVisible();
+            await new Promise(r => setTimeout(r, 120));
+
+            const rightVisibleOk = await waitFor(() => {
+                const imgs = Array.from(document.querySelectorAll('.waterfall-row img')).filter(img => {
+                    const rect = img.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth;
+                }).slice(0, 30);
+                return imgs.length >= 4 && imgs.every(img => img.classList.contains('loaded') && img.getAttribute('src'));
+            }, 5000);
+
+            const imgsNow = Array.from(document.querySelectorAll('.waterfall-row img')).filter(img => {
+                const rect = img.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth;
+            }).slice(0, 30);
+
+            return {
+                pass: rightVisibleOk,
+                viewport: { w: window.innerWidth, h: window.innerHeight },
+                beforeScrollLeft,
+                afterScrollLeft: Number((document.scrollingElement || document.documentElement).scrollLeft || 0),
+                visibleCount: imgsNow.length,
+                visibleLoadedCount: imgsNow.filter(img => img.classList.contains('loaded')).length,
+                visibleWithSrcCount: imgsNow.filter(img => !!img.getAttribute('src')).length,
+                loadStats: getImageLoadStats()
+            };
+        }
+
+        window.__picseeUnitTests = window.__picseeUnitTests || { results: Object.create(null) };
+
+        function startHorizontalConstraintsUnitTest(testId) {
+            const id = String(testId || ('h-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)));
+            window.__picseeUnitTests.results[id] = { status: 'running', startedAt: Date.now() };
+            (async () => {
+                try {
+                    const result = await runHorizontalConstraintsUnitTest();
+                    window.__picseeUnitTests.results[id] = { status: 'done', finishedAt: Date.now(), result };
+                } catch (e) {
+                    window.__picseeUnitTests.results[id] = { status: 'error', finishedAt: Date.now(), error: String(e && e.stack ? e.stack : e) };
+                }
+            })();
+            return id;
+        }
+
+        function getHorizontalConstraintsUnitTestResult(testId) {
+            const id = String(testId || '');
+            return (window.__picseeUnitTests && window.__picseeUnitTests.results && window.__picseeUnitTests.results[id]) || null;
+        }
+
+        function startScrollStabilityUnitTest(testId) {
+            const id = String(testId || ('v-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)));
+            window.__picseeUnitTests.results[id] = { status: 'running', startedAt: Date.now() };
+            (async () => {
+                try {
+                    const result = await runScrollStabilityUnitTest();
+                    window.__picseeUnitTests.results[id] = { status: 'done', finishedAt: Date.now(), result };
+                } catch (e) {
+                    window.__picseeUnitTests.results[id] = { status: 'error', finishedAt: Date.now(), error: String(e && e.stack ? e.stack : e) };
+                }
+            })();
+            return id;
+        }
+
+        function getScrollStabilityUnitTestResult(testId) {
+            const id = String(testId || '');
+            return (window.__picseeUnitTests && window.__picseeUnitTests.results && window.__picseeUnitTests.results[id]) || null;
+        }
+
+        function startVerticalToHorizontalRenderUnitTest(testId) {
+            const id = String(testId || ('s-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)));
+            window.__picseeUnitTests.results[id] = { status: 'running', startedAt: Date.now() };
+            (async () => {
+                try {
+                    const result = await runVerticalToHorizontalRenderUnitTest();
+                    window.__picseeUnitTests.results[id] = { status: 'done', finishedAt: Date.now(), result };
+                } catch (e) {
+                    window.__picseeUnitTests.results[id] = { status: 'error', finishedAt: Date.now(), error: String(e && e.stack ? e.stack : e) };
+                }
+            })();
+            return id;
+        }
+
+        function getVerticalToHorizontalRenderUnitTestResult(testId) {
+            const id = String(testId || '');
+            return (window.__picseeUnitTests && window.__picseeUnitTests.results && window.__picseeUnitTests.results[id]) || null;
+        }
+
+        function startHorizontalRightEdgeRenderUnitTest(testId) {
+            const id = String(testId || ('hr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)));
+            window.__picseeUnitTests.results[id] = { status: 'running', startedAt: Date.now() };
+            (async () => {
+                try {
+                    const result = await runHorizontalRightEdgeRenderUnitTest();
+                    window.__picseeUnitTests.results[id] = { status: 'done', finishedAt: Date.now(), result };
+                } catch (e) {
+                    window.__picseeUnitTests.results[id] = { status: 'error', finishedAt: Date.now(), error: String(e && e.stack ? e.stack : e) };
+                }
+            })();
+            return id;
+        }
+
+        function getHorizontalRightEdgeRenderUnitTestResult(testId) {
+            const id = String(testId || '');
+            return (window.__picseeUnitTests && window.__picseeUnitTests.results && window.__picseeUnitTests.results[id]) || null;
+        }
+
+        function clampZoom(n, minZoom, maxZoom) {
+            var v = Number(n);
+            if (!Number.isFinite(v)) v = 1;
+            if (v < minZoom) v = minZoom;
+            if (v > maxZoom) v = maxZoom;
+            return v;
+        }
+
+        function openPhotoSwipe(index) {
+            if (lightbox) {
+                try {
+                    // Before opening, try to ensure we have dimensions.
+                    // If not, PhotoSwipe might look weird.
+                    // Compute dynamic max zoom level based on image size
+                    const item = allImages[index];
+                    if (!item) {
+                        console.error("Image item not found at index:", index);
+                        return;
+                    }
+
+                    const w = item.width || 1;
+                    const h = item.height || 1;
+                    
+                    // Safety check for infinity
+                    let fitScale = 1;
+                    if (w > 0 && h > 0) {
+                         fitScale = Math.max(window.innerWidth / w, window.innerHeight / h);
+                    }
+                    
+                    let dynamicMax = fitScale * 4;
+                    if (!Number.isFinite(dynamicMax) || dynamicMax < 1) dynamicMax = 10;
+                    
+                    if (lightbox.options) {
+                        lightbox.options.maxZoomLevel = dynamicMax;
+                        lightbox.options.secondaryZoomLevel = dynamicMax / 2;
+                    }
+                    
+                    lightbox.loadAndOpen(index);
+                } catch (e) {
+                    console.error("Failed to open PhotoSwipe:", e);
+                }
+            }
+        }
+        
+        // Add wheel zoom support - bind to window to ensure capture
+        window.addEventListener('wheel', (e) => {
+            // Check pswpInstance existence
+            let pswp = null;
+            if (lightbox && lightbox.pswp) {
+                pswp = lightbox.pswp;
+            }
+            
+            if (!pswp || !pswp.currSlide) return;
+
+            e.preventDefault();
+            e.stopPropagation(); // Stop bubbling
+
+            let curr = pswp.currSlide.currZoomLevel;
+            if (!Number.isFinite(curr)) curr = pswp.currSlide.zoomLevels?.initial ?? 1;
+            
+            // Get zoom level bounds from PhotoSwipe
+            const minZoom = pswp.currSlide.zoomLevels?.min ?? 0.05;
+            const maxZoom = pswp.currSlide.zoomLevels?.max ?? (pswp.options.maxZoomLevel ?? 4) * 2;
+            
+            // Use same multiplicative factor logic as preview.html
+            const delta = -e.deltaY; // Up is positive (zoom in)
+            const sensitivity = 0.0015; 
+            let factor = 1 + (delta * sensitivity);
+            
+            // Clamp factor to avoid crazy jumps
+            if (factor < 0.7) factor = 0.7;
+            if (factor > 1.4) factor = 1.4;
+
+            let destZoom = curr * factor;
+            destZoom = clampZoom(destZoom, minZoom, maxZoom);
+            
+            // Apply zoom centered on mouse position
+            pswp.zoomTo(destZoom, { x: e.clientX, y: e.clientY }, 0);
+        }, { passive: false, capture: true });
+        
+        // Keyboard navigation bridge
+        document.addEventListener('keydown', (e) => {
+             // PhotoSwipe handles its own keys when open.
+             if (lightbox && lightbox.pswp) {
+                 if (e.code === 'Space') {
+                     e.preventDefault(); // Prevent default action
+                     toggleSlideshow();
+                 }
+             }
+        });
+
+    </script>
+</body>
+</html>

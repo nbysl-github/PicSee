@@ -1,0 +1,4 @@
+PyQt5
+PyQtWebEngine
+Pillow
+send2trash

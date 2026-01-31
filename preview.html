@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="resources/photoswipe/photoswipe.css">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+        .pswp__bg { background: transparent !important; }
+        /* Force zoom-in cursor for all images */
+        .pswp__img { cursor: zoom-in !important; }
+        .pswp--zoomed-in .pswp__img { cursor: zoom-in !important; }
+        .pswp--dragging .pswp__img { cursor: grabbing !important; }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden;">
+    <script src="resources/photoswipe/photoswipe.umd.min.js"></script>
+    <script src="resources/photoswipe/photoswipe-lightbox.umd.min.js"></script>
+    <script>
+        let lightbox = null;
+        let pswpInstance = null;
+        let isSwitching = false; // Flag to ignore close events during switch
+        // Utility clamp function for zoom levels
+        function clampZoom(n, minZoom, maxZoom) {
+            var v = Number(n);
+            if (!Number.isFinite(v)) v = 1;
+            if (v < minZoom) v = minZoom;
+            if (v > maxZoom) v = maxZoom;
+            return v;
+        }
+        // Initialize UI for zoom/position info (left-top corner)
+        // REMOVED per user request
+
+        // Native Wheel Event Listener (Crucial for Zoom)
+        window.addEventListener('wheel', function(e) {
+            e.preventDefault(); // Block default scrolling
+            
+            // JS deltaY: Positive = Down (Scroll Down) -> Zoom Out
+            // Python angleDelta: Positive = Up (Scroll Up) -> Zoom In
+            // We invert JS deltaY to match logic: Positive = Zoom In
+            let delta = -e.deltaY; 
+            
+            if (window.externalZoom) {
+                window.externalZoom(delta, e.clientX, e.clientY);
+            }
+        }, { passive: false, capture: true });
+
+        // Function called by Python
+        window.openImage = function(src, w, h, thumbRect) {
+            // Update data source
+            const dataSource = [{
+                src: src,
+                width: w,
+                height: h
+            }];
+
+            if (!lightbox) {
+                // Initialize Lightbox only once
+                const options = {
+                    dataSource: dataSource,
+                    pswpModule: PhotoSwipe,
+                    bgOpacity: 0.85,
+                    allowPanToNext: false,
+                    clickToCloseNonZoomable: false,
+                    closeOnVerticalDrag: false, 
+                    zoomAnimationDuration: 300,
+                    showHideAnimationType: 'zoom',
+                    // Custom step zoom handler
+                    imageClickAction: (point, originalEvent) => {
+                        if (!pswpInstance) return;
+                        const pswp = pswpInstance;
+
+                        // Robust point detection: prefer originalEvent client coordinates
+                        let centerPoint = point;
+                        if (originalEvent && typeof originalEvent.clientX === 'number') {
+                            centerPoint = { x: originalEvent.clientX, y: originalEvent.clientY };
+                        }
+                        if (!centerPoint) {
+                            centerPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+                        }
+
+                        const slide = pswp.currSlide;
+                        let currLevel = slide.currZoomLevel;
+                        if (!Number.isFinite(currLevel)) currLevel = slide.zoomLevels?.initial ?? 1;
+                        const initialLevel = slide.zoomLevels?.initial ?? 1;
+                        const maxLevel = pswp.options.maxZoomLevel ?? 4;
+                        
+                        // Define dynamic levels
+                        let level2 = initialLevel * 2.0;
+                        let level3 = initialLevel * 3.0;
+                        
+                        // If image is small, ensure levels are large enough
+                        // But since we increased maxZoomLevel, we can just let it scale up.
+                        // If level3 is still smaller than maxLevel, maybe we want to go higher?
+                        // Let's cap at maxLevel.
+                        if (level3 > maxLevel) level3 = maxLevel;
+                        if (level2 > level3) level2 = level3 * 0.66;
+
+                        let destLevel;
+                        if (currLevel < level2 - 0.1) {
+                            destLevel = level2;
+                        } else if (currLevel < level3 - 0.1) {
+                            destLevel = level3;
+                        } else {
+                            destLevel = initialLevel;
+                        }
+                        destLevel = clampZoom(destLevel, 1, Math.max(1, maxLevel * 2));
+                        pswp.zoomTo(destLevel, centerPoint, 200);
+                    },
+                    tapAction: (point, originalEvent) => {
+                        if (!pswpInstance) return;
+                        const pswp = pswpInstance;
+
+                        // Robust point detection
+                        let centerPoint = point;
+                        if (originalEvent && typeof originalEvent.clientX === 'number') {
+                            centerPoint = { x: originalEvent.clientX, y: originalEvent.clientY };
+                        }
+                        if (!centerPoint) {
+                            centerPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+                        }
+
+                        const slide = pswp.currSlide;
+                        let currLevel = slide.currZoomLevel;
+                        if (!Number.isFinite(currLevel)) currLevel = slide.zoomLevels?.initial ?? 1;
+                        const initialLevel = slide.zoomLevels?.initial ?? 1;
+                        const maxLevel = pswp.options.maxZoomLevel ?? 4;
+                        
+                        let level2 = initialLevel * 2.0;
+                        let level3 = initialLevel * 3.0;
+                        
+                        if (level3 > maxLevel) level3 = maxLevel;
+                        if (level2 > level3) level2 = level3 * 0.66;
+
+                        let destLevel;
+                        if (currLevel < level2 - 0.1) {
+                            destLevel = level2;
+                        } else if (currLevel < level3 - 0.1) {
+                            destLevel = level3;
+                        } else {
+                            destLevel = initialLevel;
+                        }
+                        destLevel = clampZoom(destLevel, 1, Math.max(1, maxLevel * 2));
+                        pswp.zoomTo(destLevel, centerPoint, 200);
+                    },
+                    // Force allow zoom for small images
+                    maxZoomLevel: 5, 
+                    secondaryZoomLevel: 2.5,
+                    padding: { top: 0, bottom: 0, left: 0, right: 0 },
+                    getThumbBoundsFn: (index) => {
+                        if (thumbRect) {
+                            return {x: thumbRect.x, y: thumbRect.y, w: thumbRect.w};
+                        }
+                        return null;
+                    }
+                };
+
+                lightbox = new PhotoSwipeLightbox(options);
+
+                lightbox.on('afterInit', () => {
+                    pswpInstance = lightbox.pswp;
+                    
+                    // Signal to Python when PhotoSwipe is closed
+                    pswpInstance.on('destroy', () => {
+                        if (isSwitching) return; // Ignore if we are switching images
+                        document.title = "action:close"; 
+                        setTimeout(() => { document.title = "PicSee Preview"; }, 100);
+                    });
+                });
+
+                lightbox.init();
+            } else {
+                // Update dataSource for existing lightbox
+                lightbox.options.dataSource = dataSource;
+                
+                // Update thumb bounds for existing lightbox if needed
+                 if (thumbRect) {
+                    lightbox.options.getThumbBoundsFn = (index) => {
+                        return {x: thumbRect.x, y: thumbRect.y, w: thumbRect.w};
+                    };
+                } else {
+                    lightbox.options.getThumbBoundsFn = null;
+                }
+            }
+
+            // If there is an active instance, close it silently (switching)
+            if (pswpInstance) {
+                isSwitching = true;
+                pswpInstance.destroy(); // Destroy old pswp instance
+                pswpInstance = null;
+                isSwitching = false;
+            }
+
+            // Open new image
+            
+            // Calculate dynamic max zoom based on image and screen size
+            // Ensure small images can be zoomed to fill screen
+            const fitScale = Math.max(window.innerWidth / w, window.innerHeight / h);
+            // Allow zooming up to 4x screen size or 10x original size, whichever is larger
+            const dynamicMax = Math.max(10, fitScale * 4);
+            
+            if (lightbox) {
+                lightbox.options.maxZoomLevel = dynamicMax;
+                lightbox.options.secondaryZoomLevel = dynamicMax / 2;
+            }
+
+            lightbox.loadAndOpen(0);
+        };
+
+        // Zoom control proxy
+        window.zoomIn = function() {
+            if (pswpInstance) {
+                const destZoom = pswpInstance.currSlide.currZoomLevel * 1.25;
+                // Center zoom
+                pswpInstance.zoomTo(destZoom, {x: window.innerWidth/2, y: window.innerHeight/2}, 200);
+            }
+        };
+
+        window.zoomOut = function() {
+            if (pswpInstance) {
+                const destZoom = pswpInstance.currSlide.currZoomLevel * 0.8;
+                pswpInstance.zoomTo(destZoom, {x: window.innerWidth/2, y: window.innerHeight/2}, 200);
+            }
+        };
+
+        // External zoom control (called from Python)
+        window.externalZoom = function(delta, x, y) {
+             let pswp = pswpInstance;
+             if (!pswp && lightbox) pswp = lightbox.pswp;
+             
+             if (!pswp || !pswp.currSlide) return;
+             
+             let curr = pswp.currSlide.currZoomLevel;
+             if (!Number.isFinite(curr)) curr = pswp.currSlide.zoomLevels?.initial ?? 1;
+             
+             const minZoom = pswp.options.minZoomLevel ?? 1;
+             const maxZoom = (pswp.options.maxZoomLevel ?? 4) * 2;
+             
+             // Calculate zoom factor based on delta magnitude
+             // Standard mouse wheel delta is usually +/- 120
+             // We want approx 1.1x for 120 delta
+             const sensitivity = 0.0015; // Slightly faster
+             let factor = 1 + (delta * sensitivity);
+             
+             // Safety bounds for factor
+             if (factor < 0.5) factor = 0.5;
+             if (factor > 2.0) factor = 2.0;
+
+             let destZoom = curr * factor;
+             destZoom = clampZoom(destZoom, minZoom, maxZoom);
+             
+             pswp.zoomTo(
+                 destZoom, 
+                 { x: x, y: y }, 
+                 0 // Immediate update
+             );
+        };
+
+        // Add wheel zoom support
+        // Bind to window to ensure capture
+        window.addEventListener('wheel', (e) => {
+            // Check pswpInstance existence
+            let pswp = pswpInstance;
+            if (!pswp && lightbox) {
+                 pswp = lightbox.pswp;
+            }
+            
+            if (!pswp || !pswp.currSlide) return;
+
+            e.preventDefault();
+            e.stopPropagation(); // Stop bubbling
+
+            let curr = pswp.currSlide.currZoomLevel;
+            if (!Number.isFinite(curr)) curr = pswp.currSlide.zoomLevels?.initial ?? 1;
+            
+            const minZoom = pswp.currSlide.zoomLevels?.min ?? pswp.currSlide.zoomLevels?.initial ?? 0.05;
+            const maxZoom = pswp.currSlide.zoomLevels?.max ?? (pswp.options.maxZoomLevel ?? 4) * 2;
+            
+            // Standardize delta
+            // Mouse wheel is usually 100 or 120 per tick.
+            const delta = -e.deltaY; // Up is positive (zoom in)
+            
+            // Factor calculation:
+            // Use log-scale or simple multiplication
+            const sensitivity = 0.0015; 
+            let factor = 1 + (delta * sensitivity);
+            
+            // Clamp factor to avoid crazy jumps
+            if (factor < 0.7) factor = 0.7;
+            if (factor > 1.4) factor = 1.4;
+
+            let destZoom = curr * factor;
+            destZoom = clampZoom(destZoom, minZoom, maxZoom);
+
+            pswp.zoomTo(
+                destZoom, 
+                { x: e.clientX, y: e.clientY }, 
+                0 // Immediate update
+            );
+        }, { passive: false, capture: true });
+    </script>
+</body>
+</html>
