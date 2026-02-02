@@ -7,11 +7,20 @@
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
         .pswp__bg { background: transparent !important; }
-        /* Force zoom-in cursor for all images */
-        .pswp__img { cursor: zoom-in !important; }
-        .pswp--zoomed-in .pswp__img { cursor: zoom-in !important; }
-        .pswp--dragging .pswp__img { cursor: grabbing !important; }
+        :root { --skin-color: #3498db; }
+        /* Custom Large Cursors (1.5x size) */
+         .pswp__img, .pswp--zoomed-in .pswp__img { 
+             cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='white' stroke-width='3'/%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='black' stroke-width='1'/%3E%3Cline x1='12' y1='8' x2='12' y2='16' stroke='black' stroke-width='2'/%3E%3Cline x1='8' y1='12' x2='16' y2='12' stroke='black' stroke-width='2'/%3E%3Cline x1='18' y1='18' x2='28' y2='28' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3Cline x1='18' y1='18' x2='28' y2='28' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") 9 9, zoom-in !important; 
+         }
+         .pswp--max-zoomed .pswp__img { 
+             cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='white' stroke-width='3'/%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='black' stroke-width='1'/%3E%3Cline x1='8' y1='12' x2='16' y2='12' stroke='black' stroke-width='2'/%3E%3Cline x1='18' y1='18' x2='28' y2='28' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3Cline x1='18' y1='18' x2='28' y2='28' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") 9 9, zoom-out !important; 
+         }
+        /* Grabbing cursor for active state and dragging state */
+        .pswp__img:active, .pswp--dragging, .pswp--dragging * { 
+            cursor: grabbing !important;
+        }
     </style>
+    <style id="dynamic-skin-style"></style>
 </head>
 <body style="margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden;">
     <script src="resources/photoswipe/photoswipe.umd.min.js"></script>
@@ -20,6 +29,23 @@
         let lightbox = null;
         let pswpInstance = null;
         let isSwitching = false; // Flag to ignore close events during switch
+
+        function setSkinColor(color) {
+            if (!color) return;
+            document.documentElement.style.setProperty('--skin-color', color);
+
+            const dynamicStyle = document.getElementById('dynamic-skin-style');
+            if (!dynamicStyle) return;
+            const encodedColor = encodeURIComponent(color);
+            dynamicStyle.innerHTML = `
+                .pswp__img:active, .pswp--dragging, .pswp--dragging * { 
+                    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='11700 8500 1500 1800'%3E%3Cstyle%3E.fil2%7Bfill:${encodedColor}%7D.fil1%7Bfill:white;stroke:black;stroke-width:20%7D%3C/style%3E%3Cpath class='fil1' d='M12498.27 9502.38c38.5,0 25.49,-61.32 25.49,-95.58l0 -86.03c0,-12.97 7.36,-27.13 14.94,-32.85 8.77,-6.62 21.56,-13.69 34.78,-10.61 30.6,7.1 39.67,24.49 39.5,56.19l0.14 143.25c3.72,32.47 55.61,34.46 55.61,-6.23l0 -70.1c0,-20.63 -6.27,-52.01 25.43,-66.96 26.65,-12.57 53.36,4.68 60.84,26.9 9.08,26.97 -1.11,118.23 3.79,141.17 7.28,34.1 54.38,29.03 54.99,-3.85 0.31,-16.83 -0.08,-34.16 -0.08,-51.06 0,-20.92 -0.91,-29.76 8.58,-42.4 14.81,-19.73 46.38,-24.44 69.13,-0.26 9.27,9.85 9.93,22.42 9.91,41.07 -0.04,33.45 0,66.91 0,100.36 0,34.67 1.59,63.96 1.59,98.77 0,38.6 -1.72,171.91 1.36,199.37 2.18,19.35 -2.13,47.72 -12.47,61.93 -14.16,19.45 -38.5,31.5 -56,69.86 -22.09,48.44 -18.91,76.76 -18.91,129.24l-391.9 0c0,-34.09 3.95,-81.53 -7.95,-108.34 -19.42,-43.74 -57.64,-45.85 -88.65,-56.32 -48.05,-16.21 -77.53,-52.97 -98.84,-95.52l-55.81 -138.54c-7.01,-17.53 -53.03,-124.42 -53.03,-141.33l0 -12.74c0,-18.45 16.46,-36.65 35.05,-36.65 39,0 42.39,21.2 66.67,56l54.41 81c1.93,2.69 2.94,3.71 4.69,6.46 1.81,2.84 3.02,5.14 4.85,7.9l36.65 54.15c0,15.77 -15.2,21.05 -28.58,22.4 -37.66,3.79 -31.02,57.75 4.53,55.66 32.17,-1.9 60.65,-20.34 73.45,-47.78 7.31,-15.69 7.95,-29.42 7.95,-52.58l0 -605.37c0,-22.04 -2.55,-39.74 5.83,-54.71 18,-32.16 62.91,-31.88 78.63,5.3 6.26,14.82 3.16,113.13 3.16,137.03 0,33.18 4.3,110.82 0.44,139.03 -2.87,20.9 1.16,47.95 1.16,69.66 0,23.37 0.01,46.73 0,70.1 -0.01,15.52 -1.73,43.01 28.67,43.01z'/%3E%3Cpath class='fil2' d='M11948.66 9045.17c0,9.64 -0.06,13.87 5.94,21.13 14.71,17.78 28.8,29.61 43.94,45.27l29.59 29.36 0.82 0.78 48.35 48.83c11.05,11 33.25,39.42 51.38,39.42 21.37,0 34.23,-20.23 24.51,-40.44 -5.03,-10.47 -59.62,-62.37 -71.91,-74.66 -9.15,-9.15 -31.03,-28.87 -37.04,-37.83l200.74 0.01c13.88,0.08 19.11,0.43 26.75,-6.71 5.53,-5.17 11.3,-12.44 10.95,-21.79 -0.3,-7.88 -5.28,-17.8 -11.22,-21.9 -8.02,-5.53 -15.2,-5.43 -28.08,-5.38l-200.73 0.01c7.64,-11.41 99.36,-97.47 108.63,-109.62 6.02,-7.88 7.14,-17.93 2.95,-27.44 -7.95,-18.06 -30.95,-22.43 -47.15,-5.61l-15.99 15.87c-0.23,0.23 -0.57,0.56 -0.81,0.78 -0.33,0.32 -1.34,1.2 -1.68,1.51l-55.91 55.6c-3.78,3.81 -6.71,6.48 -10.35,10.36 -2.33,2.49 -3.26,3.93 -5.19,5.97l-50.37 49.99c-6.34,5.87 -18.12,15.65 -18.12,26.49z'/%3E%3Cpath class='fil2' d='M12244.97 8753.63c0,5.45 3.22,12.26 6.28,16.03 24.84,30.64 55.31,-13.1 72.18,-29.97 12.6,-12.6 24.04,-24.04 36.64,-36.64 9.15,-9.15 28.87,-31.03 37.84,-37.04l0 195.95c-0.02,13.42 -1.06,19.96 4.19,29.27 10.05,17.83 34.03,19.08 47.1,1.32 5.73,-7.78 4.48,-16.35 4.47,-28.99l-0.01 -197.55c12.01,8.04 98.98,101.29 110.54,109.32 13.08,9.09 42.4,6.49 42.4,-26.48 0,-12.87 -28.58,-37.34 -40.22,-48.99l-89.22 -89.21c-34.13,-34.13 -45.65,-57.03 -78.86,-23.9l-23.05 23.15c-1.35,1.48 -0.89,1.09 -2.23,2.55l-111.72 111.31c-7.85,7.82 -16.33,14.77 -16.33,29.87z'/%3E%3Cpath class='fil2' d='M12695.81 8892.23c0,21.57 10.27,25.4 24.3,39.43 12.17,12.17 84.33,82.92 88.81,89.61l-195.95 0c-13,-0.01 -20.65,-1.38 -29.69,3.76 -16.64,9.48 -19.33,34.48 -0.67,47.32 8.1,5.57 15.43,4.71 28.77,4.68l197.54 0c-6.09,9.09 -38.37,38.65 -50.02,50.34 -3.43,3.44 -4.19,4.53 -7.96,7.97 -10.74,9.8 -19.05,19.51 -29.24,29.7 -18.48,18.49 -25.89,18.98 -25.89,41.03 0,11.81 12.6,23.89 27.09,23.89 13.39,0 21.22,-9.25 28.27,-16.33l135.42 -135.41c7.89,-7.89 16.89,-14.91 16.93,-28 0.05,-19.45 -18.37,-31.58 -37.65,-50.86l-113.1 -113.1c-10.54,-10.54 -14.31,-17.93 -31.47,-17.93 -15.36,0 -25.49,14.18 -25.49,23.9z'/%3E%3C/svg%3E") 24 24, grabbing !important;
+                }
+            `;
+        }
+
+        window.setSkinColor = setSkinColor;
+        setSkinColor(getComputedStyle(document.documentElement).getPropertyValue('--skin-color').trim() || '#3498db');
         // Utility clamp function for zoom levels
         function clampZoom(n, minZoom, maxZoom) {
             var v = Number(n);
@@ -160,6 +186,27 @@
                 lightbox.on('afterInit', () => {
                     pswpInstance = lightbox.pswp;
                     
+                    // Smart Cursor Logic
+                    pswpInstance.on('zoomPanUpdate', () => {
+                        const slide = pswpInstance.currSlide;
+                        if (!slide) return;
+                        
+                        const currLevel = slide.currZoomLevel;
+                        const initialLevel = slide.zoomLevels?.initial ?? 1;
+                        const maxLevel = pswpInstance.options.maxZoomLevel ?? 4;
+                        
+                        // Logic matching imageClickAction
+                        let level3 = initialLevel * 3.0;
+                        if (level3 > maxLevel) level3 = maxLevel;
+                        
+                        // If we are close to max zoom level (level3), show zoom-out
+                        if (currLevel >= level3 - 0.1) {
+                            pswpInstance.element.classList.add('pswp--max-zoomed');
+                        } else {
+                            pswpInstance.element.classList.remove('pswp--max-zoomed');
+                        }
+                    });
+
                     // Signal to Python when PhotoSwipe is closed
                     pswpInstance.on('destroy', () => {
                         if (isSwitching) return; // Ignore if we are switching images

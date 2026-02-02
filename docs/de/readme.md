@@ -93,4 +93,4 @@ Folgende Einstellungen bleiben nach einem Neustart erhalten:
 *   **Scanmodus (einfach / rekursiv)**
 
 ---
-Version: v1.0.2
+Version: v1.0.3

@@ -93,4 +93,4 @@ Les paramètres suivants persistent après redémarrage :
 *   **Mode de scan (simple / récursif)**
 
 ---
-Version: v1.0.2
+Version: v1.0.3

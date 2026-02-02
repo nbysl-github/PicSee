@@ -93,4 +93,4 @@ The following settings persist across restarts:
 *   **Scan mode (single / recursive)**
 
 ---
-Version: v1.0.2
+Version: v1.0.3
