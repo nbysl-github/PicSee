@@ -41,7 +41,7 @@
 
         /* 布局定位样式，独立出来以确保优先级 */
         .waterfall-container:not(.horizontal) {
-            padding: 10px;
+            padding: 0 10px 10px 10px;
             box-sizing: border-box;
         }
 
@@ -79,11 +79,17 @@
 
         .image-item img {
             width: 100%;
-            height: 100%;
+            height: 100%; /* Force fill container which is already ratio-matched */
             object-fit: contain;
             display: block;
             opacity: 0; /* Hidden initially for lazy load fade-in */
             transition: opacity 0.3s;
+        }
+        
+        /* Ensure vertical mode images take full column width */
+        .waterfall-container:not(.horizontal) .image-item img {
+            width: 100%;
+            height: auto;
         }
         
         .image-item img.loaded {
@@ -518,6 +524,20 @@
         // Set Layout Mode
         function setLayoutMode(mode) {
             if (layoutMode === mode) return;
+            
+            // Record the current visible image index before switching
+            const targetIndex = getCurrentVisibleIndex();
+            
+            // Before switching, reset scroll to avoid browser trying to "help" with invalid offsets
+            if (mode === 'vertical') {
+                window.scrollTo(0, 0);
+            } else {
+                window.scrollTo(0, 0);
+                document.body.scrollLeft = 0;
+                document.documentElement.scrollLeft = 0;
+            }
+
+            const wasHorizontal = layoutMode === 'horizontal';
             layoutMode = mode;
             
             const container = document.getElementById('waterfall');
@@ -530,10 +550,80 @@
             }
             
             // Re-render completely when switching modes
-            reRenderImages();
+            // Use a micro-task delay to ensure CSS classes have updated layout
+            setTimeout(() => {
+                if (mode === 'vertical' && wasHorizontal && allImages.length > 0) {
+                    const imagesToRender = [...allImages];
+                    const rawData = imagesToRender.map(item => {
+                        let path = item.originalPath;
+                        if (item.src && item.src.includes('?')) {
+                             const query = item.src.split('?')[1];
+                             if (query) path += '?' + query;
+                        }
+                        return {
+                            path: path,
+                            w: item.width,
+                            h: item.height
+                        };
+                    });
+                    clearImages();
+                    allImages = [];
+                    appendImages(rawData);
+                } else {
+                    reRenderImages();
+                }
+                
+                // Sync scroll position to the recorded image
+                if (targetIndex !== -1) {
+                    // Use a slightly longer delay and requestAnimationFrame to ensure layout is fully calculated
+                    requestAnimationFrame(() => {
+                        setTimeout(() => {
+                            // If targetIndex is 0 (first image), we should always go to the absolute top
+                            if (targetIndex === 0) {
+                                window.scrollTo({ top: 0, behavior: 'auto' });
+                            } else {
+                                // For layout sync, 'nearest' is better than 'center' to avoid empty space at top
+                                scrollToImage(targetIndex, true, 'nearest'); 
+                            }
+                        }, 50);
+                    });
+                }
+            }, 0);
+
             if (mode === 'horizontal') {
                 scheduleEagerLoadForVisible();
             }
+        }
+
+        function getCurrentVisibleIndex() {
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const centerX = vw / 2;
+            const centerY = vh / 2;
+
+            let closestIndex = -1;
+            let minDistance = Infinity;
+
+            const items = document.getElementsByClassName('image-item');
+            for (let i = 0; i < items.length; i++) {
+                const rect = items[i].getBoundingClientRect();
+                // Check if at least partially in viewport
+                if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) continue;
+
+                const itemCenterX = rect.left + rect.width / 2;
+                const itemCenterY = rect.top + rect.height / 2;
+                const distance = Math.sqrt(Math.pow(itemCenterX - centerX, 2) + Math.pow(itemCenterY - centerY, 2));
+
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    const img = items[i].querySelector('img');
+                    if (img && img.id) {
+                        const idx = parseInt(img.id.replace('img-', ''));
+                        if (!isNaN(idx)) closestIndex = idx;
+                    }
+                }
+            }
+            return closestIndex;
         }
 
         function reRenderImages(forcedWidth) {
@@ -562,6 +652,28 @@
                 ensureMasonryParamsLocked(forcedWidth);
                 
                 const container = document.getElementById('waterfall');
+                
+                // [Fix] 如果是从横向模式切回，需要将 image-item 从 waterfall-row 中提取出来
+                const rows = container.getElementsByClassName('waterfall-row');
+                if (rows.length > 0) {
+                    const items = Array.from(container.getElementsByClassName('image-item'));
+                    container.innerHTML = ''; // 清空所有 row
+                    items.forEach(item => {
+                        // 重置可能残留的横向布局内联样式
+                        item.style.height = '';
+                        item.style.width = '';
+                        item.style.margin = '';
+                        container.appendChild(item);
+                    });
+                    // 重新添加哨兵并重新开始观察
+                     if (sentinelElement) {
+                         container.appendChild(sentinelElement);
+                         if (sentinelObserver) {
+                             sentinelObserver.observe(sentinelElement);
+                         }
+                     }
+                 }
+
                 const items = container.getElementsByClassName('image-item');
                 
                 // 确保 pendingItems 和 DOM 元素一一对应
@@ -573,8 +685,8 @@
                     }
                 }
                 
-                // 更新容器高度
-                const displayHeight = Math.max(0, masonry.containerHeight - masonry.gap);
+                // 更新容器高度 (masonry.containerHeight 已经包含了上下各 10px 的 padding)
+                const displayHeight = Math.max(0, masonry.containerHeight);
                 container.style.height = displayHeight + 'px';
                 
                 // 更新哨兵位置
@@ -720,18 +832,15 @@
             const srcH = item.height || item.h || 1;
             const scaledH = Math.max(1, Math.round((srcH / srcW) * columnWidth));
 
-            // 考虑容器的内边距偏移 (10px)
-            const x = 10 + targetCol * (columnWidth + gap);
-            const y = 10 + minH;
+            const x = targetCol * (columnWidth + gap) + 10;
+            const y = minH;
 
-            // 使用 transform 替代 left/top 以提升性能 (减少重排)
-            // 显式设置样式，确保不触发任何意外的 CSS 过渡
             div.style.width = columnWidth + 'px';
             div.style.height = scaledH + 'px';
             div.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 
             masonry.columnHeights[targetCol] = minH + scaledH + gap;
-            masonry.containerHeight = Math.max(masonry.containerHeight, masonry.columnHeights[targetCol] + 10);
+            masonry.containerHeight = Math.max(masonry.containerHeight, minH + scaledH + 10);
         }
 
         // --- Info Panel Functions ---
@@ -1278,7 +1387,7 @@
         let sentinelElement = null;
         let highlightTimer = null; // Global timer for highlight removal
 
-        function scrollToImage(index) {
+        function scrollToImage(index, instant = false, preferredBlock = null) {
             // Check if we need to render more items to reach this index
             if (index >= currentRenderIndex) {
                  // Render until we cover this index
@@ -1295,8 +1404,16 @@
                 if (el) {
                     const targetEl = el.parentElement; // Highlight the container, not the image (to avoid overflow hidden clipping)
                     
-                    // Ensure the element is visible in the row if in horizontal mode (usually it is if attached)
-                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                    const scrollOptions = { behavior: instant ? 'auto' : 'smooth', inline: 'center' };
+                    if (preferredBlock) {
+                        scrollOptions.block = preferredBlock;
+                    } else if (layoutMode === 'horizontal') {
+                        scrollOptions.block = 'nearest'; // Minimize vertical scrolling in horizontal mode
+                    } else {
+                        scrollOptions.block = 'center';
+                    }
+                    
+                    targetEl.scrollIntoView(scrollOptions);
                     
                     // Clear previous timer to prevent premature removal
                     if (highlightTimer) {

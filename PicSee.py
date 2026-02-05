@@ -1,12 +1,28 @@
 import sys
-
 import os
+
+# 修复：在 Windows 上隐藏控制台窗口
+if sys.platform == "win32" and sys.stdout is not None:
+    try:
+        # 重定向 stdout/stderr 到 devnull，防止打包后出现控制台窗口
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+    except:
+        pass
+
 import traceback
+from collections import OrderedDict
 
 import ctypes
 import subprocess
+
+# 确保 subprocess.CREATE_NO_WINDOW 在 Windows 上可用
+if sys.platform == "win32":
+    if not hasattr(subprocess, "CREATE_NO_WINDOW"):
+        subprocess.CREATE_NO_WINDOW = 0x08000000
 from PyQt5.QtWidgets import (
     QApplication,
+    QGraphicsOpacityEffect,
     QMainWindow,
     QSplitter,
     QTreeView,
@@ -44,6 +60,8 @@ from PyQt5.QtWidgets import (
 )
 
 from PyQt5.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
     Qt,
     QModelIndex,
     QSize,
@@ -105,19 +123,23 @@ from pathlib import Path
 
 # ===================== 主题颜色配置 =====================
 THEME_COLORS = {
-    "blue":  {"normal": "#3498db", "hover": "#2980b9"},
-    "red":   {"normal": "#e74c3c", "hover": "#c0392b"},
-    "green": {"normal": "#2ecc71", "hover": "#27ae60"}
+    "blue": {"normal": "#3498db", "hover": "#2980b9"},
+    "red": {"normal": "#e74c3c", "hover": "#c0392b"},
+    "green": {"normal": "#2ecc71", "hover": "#27ae60"},
 }
 CURRENT_THEME_COLOR = "blue"
+
 
 def get_current_theme_color(is_hovered=False):
     """获取当前选中的皮肤颜色"""
     theme = THEME_COLORS.get(CURRENT_THEME_COLOR, THEME_COLORS["blue"])
     return QColor(theme["hover"] if is_hovered else theme["normal"])
 
+
 # ===================== Win11 风格菜单 =====================
 class Win11Menu(QMenu):
+    _style_cache = {}
+
     def __init__(self, title="", parent=None, is_dark=True):
         super().__init__(title, parent)
         self.is_dark = is_dark
@@ -125,11 +147,8 @@ class Win11Menu(QMenu):
 
     def _setup_menu(self):
         # 设置无边框和透明背景以实现圆角
-        # 注意：在某些系统上，QGraphicsDropShadowEffect 会导致 UpdateLayeredWindowIndirect 失败
-        # 因此我们移除自定义阴影，改用系统默认阴影或不使用阴影以保证稳定性
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.Popup)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        
         self.apply_style()
 
     def addMenu(self, *args, **kwargs):
@@ -149,6 +168,10 @@ class Win11Menu(QMenu):
         return super().addMenu(*args, **kwargs)
 
     def apply_style(self):
+        if self.is_dark in Win11Menu._style_cache:
+            self.setStyleSheet(Win11Menu._style_cache[self.is_dark])
+            return
+
         if self.is_dark:
             bg_color = "rgba(40, 40, 40, 215)"
             text_color = "#f0f0f0"
@@ -162,7 +185,7 @@ class Win11Menu(QMenu):
             hover_bg = "rgba(0, 0, 0, 15)"
             separator_color = "rgba(0, 0, 0, 15)"
 
-        self.setStyleSheet(f"""
+        style = f"""
             QMenu {{
                 background-color: {bg_color};
                 color: {text_color};
@@ -187,7 +210,10 @@ class Win11Menu(QMenu):
             QMenu::right-arrow {{
                 padding-right: 10px;
             }}
-        """)
+        """
+        Win11Menu._style_cache[self.is_dark] = style
+        self.setStyleSheet(style)
+
 
 try:
     from PyQt5.QtWebEngineWidgets import (
@@ -274,447 +300,595 @@ TRANSLATIONS.setdefault("en", dict(TRANSLATIONS["zh"]))
 
 # ===================== 自定义图标生成函数 =====================
 
+
 def get_sort_icon(is_dark=True, is_hovered=False):
     """生成排序图标 (双箭头) (支持皮肤颜色)"""
+    key = ("sort", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    if is_hovered:
-        painter.translate(0, -2)
-    
-    # 上箭头 (浅色/白色)
-    up_color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    painter.setPen(QPen(up_color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(10, 24, 10, 8)
-    painter.drawLine(10, 8, 6, 12)
-    painter.drawLine(10, 8, 14, 12)
-    
-    # 下箭头 (皮肤色)
-    painter.setPen(QPen(theme_color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(22, 8, 22, 24)
-    painter.drawLine(22, 24, 18, 20)
-    painter.drawLine(22, 24, 26, 20)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
+        if is_hovered:
+            painter.translate(0, -2)
+
+        # 上箭头 (浅色/白色)
+        up_color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        painter.setPen(QPen(up_color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(10, 24, 10, 8)
+        painter.drawLine(10, 8, 6, 12)
+        painter.drawLine(10, 8, 14, 12)
+
+        # 下箭头 (皮肤色)
+        painter.setPen(QPen(theme_color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(22, 8, 22, 24)
+        painter.drawLine(22, 24, 18, 20)
+        painter.drawLine(22, 24, 26, 20)
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_refresh_icon(is_dark=True, is_hovered=False):
     """生成刷新图标 (圆圈箭头) (支持皮肤颜色)"""
+    key = ("refresh", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
-    
-    # 绘制圆弧 (灰色)
-    painter.setPen(QPen(color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    rect = QRectF(7, 7, 18, 18)
-    start_angle = 45 * 16
-    span_angle = -280 * 16 # 顺时针
-    painter.drawArc(rect, start_angle, span_angle)
-    
-    # 绘制箭头尖端 (皮肤色)
-    painter.setPen(QPen(theme_color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.save()
-    painter.translate(22.5, 11)
-    painter.rotate(-20)
-    path = QPainterPath()
-    path.moveTo(-4, 0)
-    path.lineTo(0, 0)
-    path.lineTo(0, 4)
-    painter.drawPath(path)
-    painter.restore()
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        # 绘制圆弧 (灰色)
+        painter.setPen(QPen(color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        rect = QRectF(7, 7, 18, 18)
+        start_angle = 45 * 16
+        span_angle = -280 * 16  # 顺时针
+        painter.drawArc(rect, start_angle, span_angle)
+
+        # 绘制箭头尖端 (皮肤色)
+        painter.setPen(QPen(theme_color, 2.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.save()
+        painter.translate(22.5, 11)
+        painter.rotate(-20)
+        path = QPainterPath()
+        path.moveTo(-4, 0)
+        path.lineTo(0, 0)
+        path.lineTo(0, 4)
+        painter.drawPath(path)
+        painter.restore()
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_layout_icon(is_dark=True, is_hovered=False):
     """生成布局图标 (2x2 网格) (支持皮肤颜色)"""
+    key = ("layout", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color_gray = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    if is_hovered:
-        painter.translate(0, -2)
-    
-    pen_width = 2.5
-    painter.setPen(QPen(color_gray, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    
-    # 绘制四个小方块
-    # 左上 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRect(7, 7, 7, 7)
-    
-    # 右下 (皮肤色)
-    painter.drawRect(18, 18, 7, 7)
-    
-    # 右上 (灰色)
-    painter.setPen(QPen(color_gray, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRect(18, 7, 7, 7)
-    
-    # 左下 (灰色)
-    painter.drawRect(7, 18, 7, 7)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color_gray = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+        painter.setPen(QPen(color_gray, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+
+        # 绘制四个小方块
+        # 左上 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawRect(7, 7, 7, 7)
+
+        # 右下 (皮肤色)
+        painter.drawRect(18, 18, 7, 7)
+
+        # 右上 (灰色)
+        painter.setPen(QPen(color_gray, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawRect(18, 7, 7, 7)
+
+        # 左下 (灰色)
+        painter.drawRect(7, 18, 7, 7)
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
+
+# --- 图标缓存 ---
+_icon_cache = {}
 
 def get_delete_icon(is_dark=True, is_hovered=False):
     """生成删除/移除图标 (垃圾桶) (支持皮肤颜色)"""
+    key = ("delete", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    if is_hovered:
-        painter.translate(0, -2)
-    pen_width = 2.5
-    
-    # 盖子 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(8, 10, 24, 10)
-    painter.drawLine(13, 10, 13, 8)
-    painter.drawLine(13, 8, 19, 8)
-    painter.drawLine(19, 8, 19, 10)
-    
-    # 桶身 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(10, 10, 11, 24)
-    painter.drawLine(11, 24, 21, 24)
-    painter.drawLine(21, 24, 22, 10)
-    
-    # 桶内线条
-    painter.drawLine(14, 13, 14, 20)
-    painter.drawLine(18, 13, 18, 20)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+        if is_hovered:
+            painter.translate(0, -2)
+        pen_width = 2.5
+
+        # 盖子 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawLine(8, 10, 24, 10)
+        painter.drawLine(13, 10, 13, 8)
+        painter.drawLine(13, 8, 19, 8)
+        painter.drawLine(19, 8, 19, 10)
+
+        # 桶身 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(10, 10, 11, 24)
+        painter.drawLine(11, 24, 21, 24)
+        painter.drawLine(21, 24, 22, 10)
+
+        # 桶内线条
+        painter.drawLine(14, 13, 14, 20)
+        painter.drawLine(18, 13, 18, 20)
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_add_icon(is_dark=True, is_hovered=False):
     """生成添加图标 (加号) (支持皮肤颜色)"""
+    key = ("add", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    if is_hovered:
-        painter.translate(0, -2)
-    pen_width = 2.5
-    
-    # 圆圈 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawEllipse(7, 7, 18, 18)
-    
-    # 加号 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(16, 11, 16, 21) # 竖线
-    painter.drawLine(11, 16, 21, 16) # 横线
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+        if is_hovered:
+            painter.translate(0, -2)
+        pen_width = 2.5
+
+        # 圆圈 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawEllipse(7, 7, 18, 18)
+
+        # 加号 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawLine(16, 11, 16, 21)  # 竖线
+        painter.drawLine(11, 16, 21, 16)  # 横线
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_clear_icon(color_str="#e0e0e0", is_hovered=False):
     """生成清除(扫把)图标 (支持皮肤颜色)"""
+    key = ("clear", color_str, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor(color_str)
-    theme_color = get_current_theme_color(is_hovered)
-    pen_width = 2.5
-    
-    painter.save()
-    if is_hovered:
-        painter.translate(0, -2)
-    painter.translate(16, 16)
-    painter.rotate(-45)
-    
-    # 刷柄 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(0, -12, 0, 0)
-    
-    # 刷头 (皮肤色线条)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(-6, 0, 6, 0)
-    painter.drawLine(-6, 0, -8, 10)
-    painter.drawLine(6, 0, 8, 10)
-    painter.drawLine(-4, 0, -4, 8)
-    painter.drawLine(0, 0, 0, 8)
-    painter.drawLine(4, 0, 4, 8)
-    
-    painter.restore()
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor(color_str)
+        theme_color = get_current_theme_color(is_hovered)
+        pen_width = 2.5
+
+        painter.save()
+        if is_hovered:
+            painter.translate(0, -2)
+        painter.translate(16, 16)
+        painter.rotate(-45)
+
+        # 刷柄 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(0, -12, 0, 0)
+
+        # 刷头 (皮肤色线条)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawLine(-6, 0, 6, 0)
+        painter.drawLine(-6, 0, -8, 10)
+        painter.drawLine(6, 0, 8, 10)
+        painter.drawLine(-4, 0, -4, 8)
+        painter.drawLine(0, 0, 0, 8)
+        painter.drawLine(4, 0, 4, 8)
+
+        painter.restore()
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_folder_icon(is_dark=True, is_hovered=False):
     """生成文件夹图标 (支持皮肤颜色)"""
+    key = ("folder", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    
-    # 悬停偏移
-    if is_hovered:
-        painter.translate(0, -2)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
+
+        # 悬停偏移
+        if is_hovered:
+            painter.translate(0, -2)
+
+        # 放大 1.5 倍逻辑
+        painter.translate(16, 16)
+        painter.scale(1.5, 1.5)
+        painter.translate(-16, -16)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        pen_width = 2.0  # 稍微减细画笔
+
+        # 文件夹主体 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawRoundedRect(7, 11, 18, 12, 2, 2)
+
+        # 文件夹标签 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        path = QPainterPath()
+        path.moveTo(7, 11)
+        path.lineTo(7, 8)
+        path.lineTo(13, 8)
+        path.lineTo(15, 11)
+        painter.drawPath(path)
+    finally:
+        painter.end()
         
-    # 放大 1.5 倍逻辑
-    painter.translate(16, 16)
-    painter.scale(1.5, 1.5)
-    painter.translate(-16, -16)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    pen_width = 2.0 # 稍微减细画笔
-    
-    # 文件夹主体 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRoundedRect(7, 11, 18, 12, 2, 2)
-    
-    # 文件夹标签 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    path = QPainterPath()
-    path.moveTo(7, 11)
-    path.lineTo(7, 8)
-    path.lineTo(13, 8)
-    path.lineTo(15, 11)
-    painter.drawPath(path)
-    
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_computer_icon(is_dark=True):
-    """生成此电脑图标 (支持皮肤颜色)"""
+    """生成‘此电脑’图标 (支持主题颜色)"""
+    key = ("computer", is_dark)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color()
-    
-    # 放大 1.5 倍逻辑
-    painter.translate(16, 16)
-    painter.scale(1.5, 1.5)
-    painter.translate(-16, -16)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    pen_width = 2.0
-    
-    # 屏幕外框 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRoundedRect(6, 6, 20, 14, 2, 2)
-    
-    # 屏幕内屏 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRect(9, 9, 14, 8)
-    
-    # 底座 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(13, 20, 19, 20)
-    painter.drawLine(11, 23, 21, 23)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color()
+
+        # 放大 1.5 倍逻辑
+        painter.translate(16, 16)
+        painter.scale(1.5, 1.5)
+        painter.translate(-16, -16)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        pen_width = 2.0
+
+        # 屏幕外框 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawRoundedRect(6, 6, 20, 14, 2, 2)
+
+        # 屏幕内屏 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawRect(9, 9, 14, 8)
+
+        # 底座 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(13, 20, 19, 20)
+        painter.drawLine(11, 23, 21, 23)
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_pin_icon(is_dark=True):
     """生成图钉图标 (收藏 - 支持皮肤颜色)"""
+    key = ("pin", is_dark)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color()
-    
-    # 放大 1.5 倍逻辑
-    painter.translate(16, 16)
-    painter.scale(1.5, 1.5)
-    painter.translate(-16, -16)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    pen_width = 2.0
-    
-    # 图钉头部 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(12, 8, 20, 16)
-    painter.drawLine(10, 10, 13, 13)
-    painter.drawLine(19, 19, 22, 22)
-    
-    # 图钉身体 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(13, 13, 19, 19)
-    painter.drawLine(11, 21, 11, 21) # 针尖
-    painter.drawLine(11, 21, 15, 17)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color()
+
+        # 放大 1.5 倍逻辑
+        painter.translate(16, 16)
+        painter.scale(1.5, 1.5)
+        painter.translate(-16, -16)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        pen_width = 2.0
+
+        # 图钉头部 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawLine(12, 8, 20, 16)
+        painter.drawLine(10, 10, 13, 13)
+        painter.drawLine(19, 19, 22, 22)
+
+        # 图钉身体 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawLine(13, 13, 19, 19)
+        painter.drawLine(11, 21, 11, 21)  # 针尖
+        painter.drawLine(11, 21, 15, 17)
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_history_icon(is_dark=True):
-    """生成历史记录图标 (时钟 - 支持皮肤颜色)"""
+    """生成时钟图标 (历史 - 支持皮肤颜色)"""
+    key = ("history", is_dark)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color()
-    
-    # 放大 1.5 倍逻辑
-    painter.translate(16, 16)
-    painter.scale(1.5, 1.5)
-    painter.translate(-16, -16)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    pen_width = 2.0
-    
-    # 时钟外圈 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawEllipse(7, 7, 18, 18)
-    
-    # 指针 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(16, 16, 16, 11) # 分针
-    painter.drawLine(16, 16, 20, 16) # 时针
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color()
+
+        # 放大 1.5 倍逻辑
+        painter.translate(16, 16)
+        painter.scale(1.5, 1.5)
+        painter.translate(-16, -16)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        pen_width = 2.0
+
+        # 时钟外圈 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawEllipse(7, 7, 18, 18)
+
+        # 指针 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawLine(16, 16, 16, 11)  # 分针
+        painter.drawLine(16, 16, 20, 16)  # 时针
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_rotate_icon(direction="left", is_dark=True, is_hovered=False):
     """生成旋转图标 (支持皮肤颜色)"""
+    key = ("rotate", direction, is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
-    
-    pen_width = 2.5
-    
-    # 绘制圆弧箭头 (灰色圆弧)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    rect = QRectF(8, 8, 16, 16)
-    if direction == "left":
-        start_angle = 45 * 16
-        span_angle = 270 * 16
-        painter.drawArc(rect, start_angle, span_angle)
-        # 皮肤颜色箭头
-        painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.save()
-        painter.translate(19, 9)
-        painter.rotate(30)
-        painter.drawLine(0, 0, -4, 0)
-        painter.drawLine(0, 0, 0, 4)
-        painter.restore()
-    else:
-        start_angle = 135 * 16
-        span_angle = -270 * 16
-        painter.drawArc(rect, start_angle, span_angle)
-        # 皮肤颜色箭头
-        painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.save()
-        painter.translate(13, 9)
-        painter.rotate(-120)
-        painter.drawLine(0, 0, -4, 0)
-        painter.drawLine(0, 0, 0, 4)
-        painter.restore()
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+
+        # 绘制圆弧箭头 (灰色圆弧)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        rect = QRectF(8, 8, 16, 16)
+        if direction == "left":
+            start_angle = 45 * 16
+            span_angle = 270 * 16
+            painter.drawArc(rect, start_angle, span_angle)
+            # 皮肤颜色箭头
+            painter.setPen(
+                QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            )
+            painter.save()
+            painter.translate(19, 9)
+            painter.rotate(30)
+            painter.drawLine(0, 0, -4, 0)
+            painter.drawLine(0, 0, 0, 4)
+            painter.restore()
+        else:
+            start_angle = 135 * 16
+            span_angle = -270 * 16
+            painter.drawArc(rect, start_angle, span_angle)
+            # 皮肤颜色箭头
+            painter.setPen(
+                QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            )
+            painter.save()
+            painter.translate(13, 9)
+            painter.rotate(-120)
+            painter.drawLine(0, 0, -4, 0)
+            painter.drawLine(0, 0, 0, 4)
+            painter.restore()
+    finally:
+        painter.end()
         
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_copy_move_icon(mode="copy", is_dark=True, is_hovered=False):
     """生成复制/移动图标 (支持皮肤颜色)"""
+    key = ("copy_move", mode, is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
-    
-    pen_width = 2.5
-    
-    if mode == "copy":
-        # 两个叠加的方框
-        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.drawRoundedRect(12, 12, 12, 12, 2, 2)
-        painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.drawRoundedRect(8, 8, 12, 12, 2, 2)
-    else:
-        # 一个方框加一个皮肤颜色箭头
-        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.drawRoundedRect(8, 8, 16, 16, 2, 2)
-        painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.drawLine(12, 16, 20, 16)
-        painter.drawLine(20, 16, 17, 13)
-        painter.drawLine(20, 16, 17, 19)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+
+        if mode == "copy":
+            # 两个叠加的方框
+            painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawRoundedRect(12, 12, 12, 12, 2, 2)
+            painter.setPen(
+                QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            )
+            painter.drawRoundedRect(8, 8, 12, 12, 2, 2)
+        else:
+            # 一个方框加一个皮肤颜色箭头
+            painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawRoundedRect(8, 8, 16, 16, 2, 2)
+            painter.setPen(
+                QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            )
+            painter.drawLine(12, 16, 20, 16)
+            painter.drawLine(20, 16, 17, 13)
+            painter.drawLine(20, 16, 17, 19)
+    finally:
+        painter.end()
         
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_asc_desc_icon(mode="asc", is_dark=True, is_selected=False, is_hovered=False):
     """生成升序/降序图标 (支持皮肤颜色)"""
+    key = ("asc_desc", mode, is_dark, is_selected, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+
+        # 如果选中，在左侧绘制中点 "·"
+        if is_selected:
+            painter.setBrush(theme_color)
+            painter.setPen(Qt.NoPen)
+            # 调整点的位置到 x=4
+            painter.drawEllipse(QPointF(4, 16), 2, 2)
+
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        # 调整 offset_x=6，使箭头中心位于 22
+        # 点(4)到箭头中心(22)距离18px，去掉点半径(2)和箭头半径(4)，间距恰好为12px (约2个字符)
+        # 同时右侧留出 32-26=6px，恰好为1个字符的间距
+        offset_x = 6
+        if mode == "asc":
+            # 上箭头
+            painter.drawLine(16 + offset_x, 22, 16 + offset_x, 10)
+            painter.drawLine(16 + offset_x, 10, 12 + offset_x, 14)
+            painter.drawLine(16 + offset_x, 10, 20 + offset_x, 14)
+        else:
+            # 下箭头
+            painter.drawLine(16 + offset_x, 10, 16 + offset_x, 22)
+            painter.drawLine(16 + offset_x, 22, 12 + offset_x, 18)
+            painter.drawLine(16 + offset_x, 22, 20 + offset_x, 18)
+    finally:
+        painter.end()
         
-    pen_width = 2.5
-    
-    # 如果选中，在左侧绘制中点 "·"
-    if is_selected:
-        painter.setBrush(theme_color)
-        painter.setPen(Qt.NoPen)
-        # 调整点的位置到 x=4
-        painter.drawEllipse(QPointF(4, 16), 2, 2)
-    
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    # 调整 offset_x=6，使箭头中心位于 22
-    # 点(4)到箭头中心(22)距离18px，去掉点半径(2)和箭头半径(4)，间距恰好为12px (约2个字符)
-    # 同时右侧留出 32-26=6px，恰好为1个字符的间距
-    offset_x = 6 
-    if mode == "asc":
-        # 上箭头
-        painter.drawLine(16 + offset_x, 22, 16 + offset_x, 10)
-        painter.drawLine(16 + offset_x, 10, 12 + offset_x, 14)
-        painter.drawLine(16 + offset_x, 10, 20 + offset_x, 14)
-    else:
-        # 下箭头
-        painter.drawLine(16 + offset_x, 10, 16 + offset_x, 22)
-        painter.drawLine(16 + offset_x, 22, 12 + offset_x, 18)
-        painter.drawLine(16 + offset_x, 22, 20 + offset_x, 18)
-        
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_scan_mode_icon(mode="single", is_dark=True, is_hovered=False):
     """
@@ -722,100 +896,117 @@ def get_scan_mode_icon(mode="single", is_dark=True, is_hovered=False):
     mode: "single" 或 "multi"
     is_hovered: 是否悬停，悬停时会有浮动偏移效果
     """
+    key = ("scan_mode", mode, is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
 
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    
-    icon_color = QColor(255, 255, 255)
-    
-    # 悬停时的浮动效果 (向上偏移 4px)
-    offset_y = -4 if is_hovered else 0
-    
-    # 绘制背景圆角矩形
-    rect = QRect(4, 4 + offset_y, 24, 24)
-    painter.setBrush(theme_color)
-    painter.setPen(Qt.NoPen)
-    painter.drawRoundedRect(rect, 6, 6)
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
 
-    # 绘制内部图标
-    painter.setPen(QPen(icon_color, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.setBrush(Qt.NoBrush)
+        icon_color = QColor(255, 255, 255)
 
-    if mode == "single":
-        # 一级：文件夹
-        # 绘制文件夹主体
-        painter.drawRoundedRect(9, 11 + offset_y, 14, 10, 1, 1)
-        # 绘制文件夹顶部边缘
-        path = QPainterPath()
-        path.moveTo(9, 11 + offset_y)
-        path.lineTo(9, 10 + offset_y)
-        path.lineTo(12, 10 + offset_y)
-        path.lineTo(14, 11 + offset_y)
-        painter.drawPath(path)
-    else:
-        # 多级：层叠效果
-        # 后层文件夹
-        painter.drawRoundedRect(12, 8 + offset_y, 11, 8, 1, 1)
-        # 前层文件夹 (遮盖后层)
+        # 悬停时的浮动效果 (向上偏移 4px)
+        offset_y = -4 if is_hovered else 0
+
+        # 绘制背景圆角矩形
+        rect = QRect(4, 4 + offset_y, 24, 24)
         painter.setBrush(theme_color)
-        painter.drawRoundedRect(9, 12 + offset_y, 11, 8, 1, 1)
-        painter.setBrush(Qt.NoBrush)
-        # 顶部边缘
-        painter.drawLine(9, 12 + offset_y, 11, 12 + offset_y)
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(rect, 6, 6)
 
-    painter.end()
-    return QIcon(pixmap)
+        # 绘制内部图标
+        painter.setPen(QPen(icon_color, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setBrush(Qt.NoBrush)
+
+        if mode == "single":
+            # 一级：文件夹
+            # 绘制文件夹主体
+            painter.drawRoundedRect(9, 11 + offset_y, 14, 10, 1, 1)
+            # 绘制文件夹顶部边缘
+            path = QPainterPath()
+            path.moveTo(9, 11 + offset_y)
+            path.lineTo(9, 10 + offset_y)
+            path.lineTo(12, 10 + offset_y)
+            path.lineTo(14, 11 + offset_y)
+            painter.drawPath(path)
+        else:
+            # 多级：层叠效果
+            # 后层文件夹
+            painter.drawRoundedRect(12, 8 + offset_y, 11, 8, 1, 1)
+            # 前层文件夹 (遮盖后层)
+            painter.setBrush(theme_color)
+            painter.drawRoundedRect(9, 12 + offset_y, 11, 8, 1, 1)
+            painter.setBrush(Qt.NoBrush)
+            # 顶部边缘
+            painter.drawLine(9, 12 + offset_y, 11, 12 + offset_y)
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_clear_action_icon(is_dark=True, is_hovered=False):
     """
     生成清除按钮图标（用于收藏/历史根节点），支持皮肤颜色
     is_hovered: 是否悬停，悬停时会有浮动偏移效果
     """
+    key = ("clear_action", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
 
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    
-    icon_color = QColor(255, 255, 255)
-    
-    # 悬停时的浮动效果 (向上偏移 4px)
-    offset_y = -4 if is_hovered else 0
-    
-    # 绘制背景圆角矩形
-    rect = QRect(4, 4 + offset_y, 24, 24)
-    painter.setBrush(theme_color)
-    painter.setPen(Qt.NoPen)
-    painter.drawRoundedRect(rect, 6, 6)
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
 
-    # 绘制内部图标 (扫把风格，白色)
-    painter.setPen(QPen(icon_color, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.setBrush(Qt.NoBrush)
-    
-    painter.save()
-    painter.translate(16, 16 + offset_y)
-    painter.rotate(-45)
-    
-    # 刷柄
-    painter.drawLine(0, -6, 0, 0)
-    # 刷头
-    painter.drawLine(-4, 0, 4, 0)
-    painter.drawLine(-4, 0, -5, 6)
-    painter.drawLine(4, 0, 5, 6)
-    painter.drawLine(-2, 0, -2, 5)
-    painter.drawLine(0, 0, 0, 5)
-    painter.drawLine(2, 0, 2, 5)
-    
-    painter.restore()
+        icon_color = QColor(255, 255, 255)
 
-    painter.end()
-    return QIcon(pixmap)
+        # 悬停时的浮动效果 (向上偏移 4px)
+        offset_y = -4 if is_hovered else 0
+
+        # 绘制背景圆角矩形
+        rect = QRect(4, 4 + offset_y, 24, 24)
+        painter.setBrush(theme_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(rect, 6, 6)
+
+        # 绘制内部图标 (扫把风格，白色)
+        painter.setPen(QPen(icon_color, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setBrush(Qt.NoBrush)
+
+        painter.save()
+        painter.translate(16, 16 + offset_y)
+        painter.rotate(-45)
+
+        # 刷柄
+        painter.drawLine(0, -6, 0, 0)
+        # 刷头
+        painter.drawLine(-4, 0, 4, 0)
+        painter.drawLine(-4, 0, -5, 6)
+        painter.drawLine(4, 0, 5, 6)
+        painter.drawLine(-2, 0, -2, 5)
+        painter.drawLine(0, 0, 0, 5)
+        painter.drawLine(2, 0, 2, 5)
+
+        painter.restore()
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
 
 
 def get_sidebar_toggle_icon(is_collapsed=False, is_dark=True, is_hovered=False):
@@ -824,240 +1015,314 @@ def get_sidebar_toggle_icon(is_collapsed=False, is_dark=True, is_hovered=False):
     is_collapsed: True 为展开箭头（向右），False 为收起箭头（向左）
     is_hovered: 是否悬停，悬停时会有浮动偏移效果和颜色加深
     """
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    
-    icon_color = QColor(255, 255, 255)
-    
-    # 悬停时的浮动效果 (向上偏移 4px)
-    offset_y = -4 if is_hovered else 0
-    
-    # 绘制背景圆角矩形
-    rect = QRect(4, 4 + offset_y, 24, 24)
-    painter.setBrush(theme_color)
-    painter.setPen(Qt.NoPen)
-    painter.drawRoundedRect(rect, 6, 6)
-
-    # 绘制内部图标 (三角形箭头，白色)
-    painter.setBrush(icon_color)
-    
-    # 箭头大小参数
-    arrow_half_base = 5
-    arrow_height = 8
-    center_x = 16
-    center_y = 16 + offset_y
-    
-    triangle = QPolygonF()
-    if is_collapsed:
-        # 向右箭头 (展开)
-        triangle.append(QPointF(center_x - arrow_height / 2, center_y - arrow_half_base))
-        triangle.append(QPointF(center_x - arrow_height / 2, center_y + arrow_half_base))
-        triangle.append(QPointF(center_x + arrow_height / 2, center_y))
-    else:
-        # 向左箭头 (收起)
-        triangle.append(QPointF(center_x + arrow_height / 2, center_y - arrow_half_base))
-        triangle.append(QPointF(center_x + arrow_height / 2, center_y + arrow_half_base))
-        triangle.append(QPointF(center_x - arrow_height / 2, center_y))
+    key = ("sidebar_toggle", is_collapsed, is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
         
-    painter.drawPolygon(triangle)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def get_layout_type_icon(mode="vertical", is_dark=True, is_selected=False, has_offset=True, is_hovered=False):
-    """生成布局类型图标 (支持皮肤颜色)"""
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    
-    # 动态偏移效果
-    offset_y = -4 if is_hovered else 0
-    
-    # 情况 A: 在分栏条中使用 (has_offset=False)，采用与扫描模式一致的圆角风格
-    if not has_offset:
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
+
+        icon_color = QColor(255, 255, 255)
+
+        # 悬停时的浮动效果 (向上偏移 4px)
+        offset_y = -4 if is_hovered else 0
+
         # 绘制背景圆角矩形
         rect = QRect(4, 4 + offset_y, 24, 24)
         painter.setBrush(theme_color)
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(rect, 6, 6)
-        
-        # 内部图标使用白色
-        icon_color = QColor(255, 255, 255)
-        pen_width = 2.0
-        painter.setPen(QPen(icon_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.setBrush(Qt.NoBrush)
-        
-        if mode == "vertical":
-            painter.drawRoundedRect(10, 9 + offset_y, 5, 14, 1, 1)
-            painter.drawRoundedRect(17, 9 + offset_y, 5, 14, 1, 1)
+
+        # 绘制内部图标 (三角形箭头，白色)
+        painter.setBrush(icon_color)
+
+        # 箭头大小参数
+        arrow_half_base = 5
+        arrow_height = 8
+        center_x = 16
+        center_y = 16 + offset_y
+
+        triangle = QPolygonF()
+        if is_collapsed:
+            # 向右箭头 (展开)
+            triangle.append(
+                QPointF(center_x - arrow_height / 2, center_y - arrow_half_base)
+            )
+            triangle.append(
+                QPointF(center_x - arrow_height / 2, center_y + arrow_half_base)
+            )
+            triangle.append(QPointF(center_x + arrow_height / 2, center_y))
         else:
-            painter.drawRoundedRect(9, 10 + offset_y, 14, 5, 1, 1)
-            painter.drawRoundedRect(9, 17 + offset_y, 14, 5, 1, 1)
-            
-    # 情况 B: 在右键菜单中使用 (has_offset=True)，保持原有的线条风格和选中点
-    else:
-        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-        pen_width = 2.5
+            # 向左箭头 (收起)
+            triangle.append(
+                QPointF(center_x + arrow_height / 2, center_y - arrow_half_base)
+            )
+            triangle.append(
+                QPointF(center_x + arrow_height / 2, center_y + arrow_half_base)
+            )
+            triangle.append(QPointF(center_x - arrow_height / 2, center_y))
+
+        painter.drawPolygon(triangle)
+    finally:
+        painter.end()
         
-        # 如果选中，在左侧绘制中点 "·"
-        if is_selected:
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
+
+def get_layout_type_icon(
+    mode="vertical", is_dark=True, is_selected=False, has_offset=True, is_hovered=False
+):
+    """生成布局类型图标 (支持皮肤颜色)"""
+    key = ("layout_type", mode, is_dark, is_selected, has_offset, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
+
+        # 动态偏移效果
+        offset_y = -4 if is_hovered else 0
+
+        # 情况 A: 在分栏条中使用 (has_offset=False)，采用与扫描模式一致的圆角风格
+        if not has_offset:
+            # 绘制背景圆角矩形
+            rect = QRect(4, 4 + offset_y, 24, 24)
             painter.setBrush(theme_color)
             painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPointF(4, 16), 2, 2)
-        
-        offset_x = 6
-        if mode == "vertical":
-            painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            painter.drawRoundedRect(10 + offset_x, 8, 5, 16, 1, 1)
-            painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            painter.drawRoundedRect(17 + offset_x, 8, 5, 16, 1, 1)
+            painter.drawRoundedRect(rect, 6, 6)
+
+            # 内部图标使用白色
+            icon_color = QColor(255, 255, 255)
+            pen_width = 2.0
+            painter.setPen(
+                QPen(icon_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            )
+            painter.setBrush(Qt.NoBrush)
+
+            if mode == "vertical":
+                painter.drawRoundedRect(10, 9 + offset_y, 5, 14, 1, 1)
+                painter.drawRoundedRect(17, 9 + offset_y, 5, 14, 1, 1)
+            else:
+                painter.drawRoundedRect(9, 10 + offset_y, 14, 5, 1, 1)
+                painter.drawRoundedRect(9, 17 + offset_y, 14, 5, 1, 1)
+
+        # 情况 B: 在右键菜单中使用 (has_offset=True)，保持原有的线条风格和选中点
         else:
-            painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            painter.drawRoundedRect(8 + offset_x, 10, 16, 5, 1, 1)
-            painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            painter.drawRoundedRect(8 + offset_x, 17, 16, 5, 1, 1)
+            color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+            pen_width = 2.5
+
+            # 如果选中，在左侧绘制中点 "·"
+            if is_selected:
+                painter.setBrush(theme_color)
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QPointF(4, 16), 2, 2)
+
+            offset_x = 6
+            if mode == "vertical":
+                painter.setPen(
+                    QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+                )
+                painter.drawRoundedRect(10 + offset_x, 8, 5, 16, 1, 1)
+                painter.setPen(
+                    QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+                )
+                painter.drawRoundedRect(17 + offset_x, 8, 5, 16, 1, 1)
+            else:
+                painter.setPen(
+                    QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+                )
+                painter.drawRoundedRect(8 + offset_x, 10, 16, 5, 1, 1)
+                painter.setPen(
+                    QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+                )
+                painter.drawRoundedRect(8 + offset_x, 17, 16, 5, 1, 1)
+    finally:
+        painter.end()
         
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
+
+def get_size_icon(is_dark=True, is_hovered=False):
+    """生成尺寸筛选图标 (支持皮肤颜色)"""
+    key = ("size", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+
+        # 绘制大框 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawRoundedRect(8, 8, 16, 16, 2, 2)
+
+        # 绘制小框 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawRoundedRect(12, 12, 8, 8, 1, 1)
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
 
 
 def get_format_icon(is_dark=True, is_hovered=False):
     """生成格式筛选图标 (支持皮肤颜色)"""
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
-        
-    pen_width = 2.5
-    
-    # 绘制三个带圆点的横线
-    # 横线 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawLine(10, 11, 22, 11)
-    painter.drawLine(10, 16, 22, 16)
-    painter.drawLine(10, 21, 22, 21)
-    
-    # 圆点 (皮肤色)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(theme_color)
-    painter.drawEllipse(QRectF(6.5, 9.5, 3, 3))
-    painter.drawEllipse(QRectF(6.5, 14.5, 3, 3))
-    painter.drawEllipse(QRectF(6.5, 19.5, 3, 3))
-    
-    painter.end()
-    return QIcon(pixmap)
+    key = ("format", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
 
-def get_size_icon(is_dark=True, is_hovered=False):
-    """生成尺寸筛选图标 (支持皮肤颜色)"""
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
-        
-    pen_width = 2.5
-    
-    # 绘制大框 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRoundedRect(8, 8, 16, 16, 2, 2)
-    
-    # 绘制小框 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawRoundedRect(12, 12, 8, 8, 1, 1)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+
+        # 绘制背景框 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawRoundedRect(7, 9, 18, 14, 2, 2)
+
+        # 绘制内部的小星星或形状 (皮肤色) - 代表"格式/特效"
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawLine(12, 16, 20, 16)
+        painter.drawLine(16, 12, 16, 20)
+    finally:
+        painter.end()
+
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_help_icon(is_dark=True, is_hovered=False):
     """生成使用说明图标 (支持皮肤颜色)"""
+    key = ("help", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    if is_hovered:
-        # 浮动效果：向上偏移 2px
-        painter.translate(0, -2)
-    
-    # 绘制外圆
-    pen_width = 2.5
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawEllipse(7, 7, 18, 18)
-    
-    # 绘制问号
-    path = QPainterPath()
-    path.moveTo(12.5, 13.5)
-    path.arcTo(12.5, 11, 7, 6, 180, -180)
-    path.lineTo(16, 17)
-    painter.drawPath(path)
-    
-    # 绘制点
-    painter.setBrush(theme_color)
-    painter.setPen(Qt.NoPen)
-    painter.drawEllipse(QRectF(15, 20.5, 2.5, 2.5))
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
+        if is_hovered:
+            # 浮动效果：向上偏移 2px
+            painter.translate(0, -2)
+
+        # 绘制外圆
+        pen_width = 2.5
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawEllipse(7, 7, 18, 18)
+
+        # 绘制问号
+        path = QPainterPath()
+        path.moveTo(12.5, 13.5)
+        path.arcTo(12.5, 11, 7, 6, 180, -180)
+        path.lineTo(16, 17)
+        painter.drawPath(path)
+
+        # 绘制点
+        painter.setBrush(theme_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QRectF(15, 20.5, 2.5, 2.5))
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_lang_icon(lang_code="zh", is_dark=True, is_hovered=False):
     """生成语言切换图标 (支持皮肤颜色 - 字符图标: 中/繁/En/ja/de/fr)"""
+    key = ("lang", lang_code, is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setRenderHint(QPainter.TextAntialiasing)
-    
-    # 获取主题颜色
-    theme_color = get_current_theme_color(is_hovered)
-    if is_hovered:
-        painter.translate(0, -2)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        # 获取主题颜色
+        theme_color = get_current_theme_color(is_hovered)
+        if is_hovered:
+            painter.translate(0, -2)
+
+        # 映射语言代码到显示的文字
+        lang_map = {
+            "zh": "中",
+            "zh_tw": "繁",
+            "en": "En",
+            "ja": "ja",
+            "de": "de",
+            "fr": "fr",
+        }
+        display_text = lang_map.get(_normalize_lang_code(lang_code), "En")
+
+        # 绘制文字
+        painter.setPen(theme_color)
+        # 使用更粗的字体，并显著增大字号
+        font = QFont("Arial", 14, QFont.Black)
+        if display_text in ["中", "繁"]:
+            font.setPointSize(15)
+        painter.setFont(font)
+
+        # 在整个画布(32x32)中居中绘制文字
+        painter.drawText(QRect(0, 0, 32, 32), Qt.AlignCenter, display_text)
+    finally:
+        painter.end()
         
-    # 映射语言代码到显示的文字
-    lang_map = {
-        "zh": "中",
-        "zh_tw": "繁",
-        "en": "En",
-        "ja": "ja",
-        "de": "de",
-        "fr": "fr"
-    }
-    display_text = lang_map.get(_normalize_lang_code(lang_code), "En")
-    
-    # 绘制文字
-    painter.setPen(theme_color)
-    # 使用更粗的字体，并显著增大字号
-    font = QFont("Arial", 14, QFont.Black) 
-    if display_text in ["中", "繁"]:
-        font.setPointSize(15)
-    painter.setFont(font)
-    
-    # 在整个画布(32x32)中居中绘制文字
-    painter.drawText(QRect(0, 0, 32, 32), Qt.AlignCenter, display_text)
-    
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_skin_icon(is_dark=True, is_hovered=False):
     """生成皮肤切换图标 (支持皮肤颜色)"""
@@ -1066,73 +1331,95 @@ def get_skin_icon(is_dark=True, is_hovered=False):
         return _get_tshirt_icon(theme_color.name(), is_hovered=True)
     return _get_tshirt_icon(theme_color.name(), is_hovered=False)
 
+
 def _get_tshirt_icon(color_hex: str, is_hovered: bool = False):
+    key = ("tshirt", color_hex, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    if is_hovered:
-        painter.translate(0, -2)
-    
-    pen_width = 2.5
-    painter.setPen(QPen(QColor(color_hex), pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.setBrush(Qt.NoBrush)
-    
-    path = QPainterPath()
-    path.moveTo(12, 7)
-    path.lineTo(10, 7)
-    path.lineTo(6, 10)
-    path.lineTo(8, 14)
-    path.lineTo(10, 13)
-    path.lineTo(10, 25)
-    path.lineTo(22, 25)
-    path.lineTo(22, 13)
-    path.lineTo(24, 14)
-    path.lineTo(26, 10)
-    path.lineTo(22, 7)
-    path.lineTo(20, 7)
-    path.lineTo(18, 9)
-    path.lineTo(16, 8)
-    path.lineTo(14, 9)
-    path.closeSubpath()
-    painter.drawPath(path)
-    
-    painter.end()
-    return QIcon(pixmap)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.5
+        painter.setPen(
+            QPen(QColor(color_hex), pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.setBrush(Qt.NoBrush)
+
+        path = QPainterPath()
+        path.moveTo(12, 7)
+        path.lineTo(10, 7)
+        path.lineTo(6, 10)
+        path.lineTo(8, 14)
+        path.lineTo(10, 13)
+        path.lineTo(10, 25)
+        path.lineTo(22, 25)
+        path.lineTo(22, 13)
+        path.lineTo(24, 14)
+        path.lineTo(26, 10)
+        path.lineTo(22, 7)
+        path.lineTo(20, 7)
+        path.lineTo(18, 9)
+        path.lineTo(16, 8)
+        path.lineTo(14, 9)
+        path.closeSubpath()
+        painter.drawPath(path)
+    finally:
+        painter.end()
+        
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
+
 
 def get_search_btn_icon(is_dark=True, is_hovered=False):
     """生成搜索按钮图标 (支持皮肤颜色)"""
+    key = ("search_btn", is_dark, is_hovered)
+    if key in _icon_cache:
+        return _icon_cache[key]
+        
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    
-    color = QColor("#e0e0e0") if is_dark else QColor("#333333")
-    theme_color = get_current_theme_color(is_hovered)
-    
-    if is_hovered:
-        painter.translate(0, -2)
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor("#e0e0e0") if is_dark else QColor("#333333")
+        theme_color = get_current_theme_color(is_hovered)
+
+        if is_hovered:
+            painter.translate(0, -2)
+
+        pen_width = 2.0
+
+        # 绘制搜索放大镜 (灰色)
+        painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.drawEllipse(10, 10, 10, 10)
+        painter.drawLine(18, 18, 23, 23)
+
+        # 绘制外围的两个圆弧 (皮肤色)
+        painter.setPen(
+            QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        )
+        painter.drawArc(6, 6, 20, 20, 45 * 16, 135 * 16)
+        painter.drawArc(6, 6, 20, 20, 225 * 16, 135 * 16)
+
+        # 在圆弧末端加小圆点 (皮肤色)
+        painter.setBrush(theme_color)
+        painter.drawEllipse(20, 6, 2, 2)
+        painter.drawEllipse(10, 24, 2, 2)
+    finally:
+        painter.end()
         
-    pen_width = 2.0
-    
-    # 绘制搜索放大镜 (灰色)
-    painter.setPen(QPen(color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawEllipse(10, 10, 10, 10)
-    painter.drawLine(18, 18, 23, 23)
-    
-    # 绘制外围的两个圆弧 (皮肤色)
-    painter.setPen(QPen(theme_color, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    painter.drawArc(6, 6, 20, 20, 45 * 16, 135 * 16)
-    painter.drawArc(6, 6, 20, 20, 225 * 16, 135 * 16)
-    
-    # 在圆弧末端加小圆点 (皮肤色)
-    painter.setBrush(theme_color)
-    painter.drawEllipse(20, 6, 2, 2)
-    painter.drawEllipse(10, 24, 2, 2)
-    
-    painter.end()
-    return QIcon(pixmap)
+    icon = QIcon(pixmap)
+    _icon_cache[key] = icon
+    return icon
 
 
 def _detect_system_lang_code():
@@ -1164,6 +1451,7 @@ def _ensure_zoom_defaults(img):
 # ===================== 自定义 WebEngineView =====================
 class FloatingSearchBox(QWidget):
     """居中弹出的搜索框"""
+
     sig_search = pyqtSignal(str)
 
     def __init__(self, parent=None, is_dark=True):
@@ -1172,34 +1460,34 @@ class FloatingSearchBox(QWidget):
         # 增加 Qt.WindowStaysOnTopHint 确保在最前
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        
+
         # 尺寸缩小 20%：1200x160 -> 960x128
         self.setFixedSize(960, 128)
         self._setup_ui()
-        
+
     def _setup_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(32, 16, 32, 16)
-        
+
         # 外层容器
         self.container = QFrame()
         self.container.setObjectName("searchContainer")
         container_layout = QHBoxLayout(self.container)
         container_layout.setContentsMargins(24, 0, 24, 0)
-        
+
         # 输入框
         self.input = QLineEdit()
         self.input.setObjectName("searchInput")
         self.input.setPlaceholderText("搜索图片")
         self.input.returnPressed.connect(self._on_search)
         container_layout.addWidget(self.input)
-        
+
         # 搜索图标
         self.icon_label = QLabel()
         # 图标也相应缩小
         self.icon_label.setPixmap(get_search_btn_icon(self.is_dark).pixmap(50, 50))
         container_layout.addWidget(self.icon_label)
-        
+
         layout.addWidget(self.container)
         self.apply_style()
 
@@ -1222,7 +1510,7 @@ class FloatingSearchBox(QWidget):
                 border-radius: 20px;
             }}
         """)
-        
+
         # 字体大小也相应减小
         self.input.setStyleSheet(f"""
             #searchInput {{
@@ -1277,7 +1565,7 @@ class CustomWebEngineView(QWebEngineView):
     sig_format_changed = pyqtSignal(str)
     sig_size_changed = pyqtSignal(str)
 
-    def __init__(self, parent=None, lang='zh'):
+    def __init__(self, parent=None, lang="zh"):
         super().__init__(parent)
         self.lang = lang
 
@@ -1313,7 +1601,7 @@ class CustomWebEngineView(QWebEngineView):
                     # 1. 在资源管理器中打开
                     action_open = QAction(
                         get_folder_icon(is_dark),
-                        t['menu_open_explorer'],
+                        t["menu_open_explorer"],
                         self,
                     )
                     action_open.triggered.connect(
@@ -1325,7 +1613,7 @@ class CustomWebEngineView(QWebEngineView):
 
                     # 2. 旋转
                     action_left = QAction(
-                        get_rotate_icon("left", is_dark), t['menu_rotate_left'], self
+                        get_rotate_icon("left", is_dark), t["menu_rotate_left"], self
                     )
                     action_left.triggered.connect(
                         lambda: self.sig_rotate_left.emit(file_path)
@@ -1334,7 +1622,7 @@ class CustomWebEngineView(QWebEngineView):
 
                     action_right = QAction(
                         get_rotate_icon("right", is_dark),
-                        t['menu_rotate_right'],
+                        t["menu_rotate_right"],
                         self,
                     )
                     action_right.triggered.connect(
@@ -1346,9 +1634,7 @@ class CustomWebEngineView(QWebEngineView):
 
                     # 复制/移动
                     action_copy = QAction(
-                        get_copy_move_icon("copy", is_dark),
-                        t['menu_copy_to'],
-                        self
+                        get_copy_move_icon("copy", is_dark), t["menu_copy_to"], self
                     )
                     action_copy.triggered.connect(
                         lambda: self.sig_copy_image.emit(file_path)
@@ -1356,9 +1642,7 @@ class CustomWebEngineView(QWebEngineView):
                     menu.addAction(action_copy)
 
                     action_move = QAction(
-                        get_copy_move_icon("move", is_dark),
-                        t['menu_move_to'],
-                        self
+                        get_copy_move_icon("move", is_dark), t["menu_move_to"], self
                     )
                     action_move.triggered.connect(
                         lambda: self.sig_move_image.emit(file_path)
@@ -1369,7 +1653,7 @@ class CustomWebEngineView(QWebEngineView):
 
                     # 3. 删除
                     action_delete = QAction(
-                        get_delete_icon(is_dark), t['menu_delete'], self
+                        get_delete_icon(is_dark), t["menu_delete"], self
                     )
                     action_delete.triggered.connect(
                         lambda: self.sig_delete_image.emit(file_path)
@@ -1382,19 +1666,14 @@ class CustomWebEngineView(QWebEngineView):
             # 如果点击的是背景（或非本地图片）
             # 添加通用菜单：刷新、排序
 
-            action_refresh = QAction(
-                get_refresh_icon(is_dark), t['menu_refresh'], self
-            )
+            action_refresh = QAction(get_refresh_icon(is_dark), t["menu_refresh"], self)
             action_refresh.triggered.connect(self.sig_refresh.emit)
             menu.addAction(action_refresh)
 
             menu.addSeparator()
 
             # 排序子菜单
-            sort_menu = menu.addMenu(
-                get_sort_icon(is_dark),
-                t['menu_sort']
-            )
+            sort_menu = menu.addMenu(get_sort_icon(is_dark), t["menu_sort"])
 
             # 获取当前排序模式以显示选中状态
             main_window = self.window()
@@ -1402,7 +1681,7 @@ class CustomWebEngineView(QWebEngineView):
 
             def add_sort_action(menu_obj, mode, icon_type, label_key):
                 # 获取选中状态
-                is_selected = (current_sort == mode)
+                is_selected = current_sort == mode
                 # 图标右侧已留出6px(约1个字符)间距，此处前缀设为空
                 prefix = ""
                 # 为每一项添加图标 (升序/降序)，并传入选中状态以绘制左侧中点
@@ -1414,15 +1693,15 @@ class CustomWebEngineView(QWebEngineView):
             # 1. 名称排序
             add_sort_action(sort_menu, "name_asc", "asc", "menu_sort_name_asc")
             add_sort_action(sort_menu, "name_desc", "desc", "menu_sort_name_desc")
-            
-            sort_menu.addSeparator() # 三栏之间要有分隔线
-            
+
+            sort_menu.addSeparator()  # 三栏之间要有分隔线
+
             # 2. 日期排序
             add_sort_action(sort_menu, "date_desc", "desc", "menu_sort_date_desc")
             add_sort_action(sort_menu, "date_asc", "asc", "menu_sort_date_asc")
-            
-            sort_menu.addSeparator() # 三栏之间要有分隔线
-            
+
+            sort_menu.addSeparator()  # 三栏之间要有分隔线
+
             # 3. 大小排序
             add_sort_action(sort_menu, "size_desc", "desc", "menu_sort_size_desc")
             add_sort_action(sort_menu, "size_asc", "asc", "menu_sort_size_asc")
@@ -1430,58 +1709,60 @@ class CustomWebEngineView(QWebEngineView):
             menu.addSeparator()
 
             # 格式筛选子菜单
-            format_menu = menu.addMenu(
-                get_format_icon(is_dark),
-                t['format_label']
-            )
-            
+            format_menu = menu.addMenu(get_format_icon(is_dark), t["format_label"])
+
             # 获取当前选中的格式
-            current_format = getattr(main_window, "current_format_filter", t['all_formats'])
-            
+            current_format = getattr(
+                main_window, "current_format_filter", t["all_formats"]
+            )
+
             def add_format_action(menu_obj, label):
                 # 保持与排序菜单一致：点后面跟2个空格
                 prefix = "·  " if current_format == label else "   "
                 action = QAction(prefix + label, self)
                 action.triggered.connect(lambda: self.sig_format_changed.emit(label))
                 menu_obj.addAction(action)
-            
-            formats = [t['all_formats'], "JPG", "PNG", "GIF", "BMP", "WEBP", "SVG", "RAW"]
+
+            formats = [
+                t["all_formats"],
+                "JPG",
+                "PNG",
+                "GIF",
+                "BMP",
+                "WEBP",
+                "SVG",
+                "RAW",
+            ]
             for f in formats:
                 add_format_action(format_menu, f)
 
             # 尺寸筛选子菜单
-            size_menu = menu.addMenu(
-                get_size_icon(is_dark),
-                t['size_label']
-            )
-            
+            size_menu = menu.addMenu(get_size_icon(is_dark), t["size_label"])
+
             # 获取当前选中的尺寸
-            current_size = getattr(main_window, "current_size_filter", t['all_sizes'])
-            
+            current_size = getattr(main_window, "current_size_filter", t["all_sizes"])
+
             def add_size_action(menu_obj, label):
                 # 保持与排序菜单一致：点后面跟2个空格
                 prefix = "·  " if current_size == label else "   "
                 action = QAction(prefix + label, self)
                 action.triggered.connect(lambda: self.sig_size_changed.emit(label))
                 menu_obj.addAction(action)
-                
-            sizes = [t['all_sizes'], t['large_img'], t['medium_img'], t['small_img']]
+
+            sizes = [t["all_sizes"], t["large_img"], t["medium_img"], t["small_img"]]
             for s in sizes:
                 add_size_action(size_menu, s)
 
             menu.addSeparator()
 
             # 布局子菜单
-            layout_menu = menu.addMenu(
-                get_layout_icon(is_dark),
-                t['menu_layout']
-            )
+            layout_menu = menu.addMenu(get_layout_icon(is_dark), t["menu_layout"])
 
             current_layout = getattr(main_window, "current_layout_mode", "vertical")
 
             def add_layout_action(menu_obj, mode, label_key):
                 # 获取选中状态
-                is_selected = (current_layout == mode)
+                is_selected = current_layout == mode
                 # 图标右侧已留出6px(约1个字符)间距，此处前缀设为空
                 prefix = ""
                 # 为每一项添加布局图标，并传入选中状态以绘制左侧中点
@@ -1520,7 +1801,7 @@ class LanguageComboBox(QComboBox):
         is_dark = True
         if hasattr(self.window(), "is_dark_theme"):
             is_dark = self.window().is_dark_theme
-        
+
         # 获取当前项的语言代码
         lang_code = self.itemData(self.currentIndex()) or "zh"
         icon = get_lang_icon(lang_code, is_dark, self.is_hovered)
@@ -1534,8 +1815,10 @@ class LanguageComboBox(QComboBox):
         event.accept()
         return
 
+
 class HoverButton(QPushButton):
     """支持悬停图标切换和浮动效果的按钮"""
+
     def __init__(self, icon_func, parent=None):
         super().__init__(parent)
         self.icon_func = icon_func
@@ -1567,7 +1850,7 @@ class CollapsibleSplitterHandle(QSplitterHandle):
         super().__init__(orientation, parent)
         self.is_hovered = False
         self.button_height = 50  # 增加高度以保持比例 (40 -> 50)
-        self.button_width = 32   # 与 handle 宽度一致 (36 -> 32)
+        self.button_width = 32  # 与 handle 宽度一致 (36 -> 32)
         self.setMouseTracking(True)
         self.press_global_pos = None  # 记录按下全局位置，用于区分点击和拖拽
 
@@ -1626,37 +1909,45 @@ class CollapsibleSplitterHandle(QSplitterHandle):
 
         # 使用全局 get_layout_type_icon 绘制图标，确保风格统一
         # 设置 has_offset=False 确保在分栏条中左右居中对齐
-        icon = get_layout_type_icon(current_mode, is_dark, has_offset=False, is_hovered=is_layout_hovered)
-        
+        icon = get_layout_type_icon(
+            current_mode, is_dark, has_offset=False, is_hovered=is_layout_hovered
+        )
+
         # 计算图标绘制区域
         icon_w = 32  # 图标大小 (30 -> 32)
         icon_h = 32
         icon_x = (self.width() - icon_w) // 2
         icon_y = layout_btn_rect.y() + (self.layout_btn_height - icon_h) // 2
-        
+
         icon_rect = QRect(icon_x, icon_y, icon_w, icon_h)
         icon.paint(painter, icon_rect)
 
         # --- 绘制折叠按钮 ---
         is_collapse_hovered = collapse_btn_rect.contains(mouse_pos)
-        
+
         # 根据当前状态决定箭头方向
         is_collapsed = False
         if isinstance(self.parent(), QSplitter):
             sizes = self.parent().sizes()
             if sizes and sizes[0] < 10:  # 左侧栏宽度很小
                 is_collapsed = True
-        
+
         # 使用统一的蓝色风格绘制折叠按钮图标
-        collapse_icon = get_sidebar_toggle_icon(is_collapsed, is_dark, is_hovered=is_collapse_hovered)
-        
+        collapse_icon = get_sidebar_toggle_icon(
+            is_collapsed, is_dark, is_hovered=is_collapse_hovered
+        )
+
         # 计算图标绘制区域
         collapse_icon_w = 32  # 图标大小 (30 -> 32)
         collapse_icon_h = 32
         collapse_icon_x = (self.width() - collapse_icon_w) // 2
-        collapse_icon_y = collapse_btn_rect.y() + (self.button_height - collapse_icon_h) // 2
-        
-        collapse_icon_rect = QRect(collapse_icon_x, collapse_icon_y, collapse_icon_w, collapse_icon_h)
+        collapse_icon_y = (
+            collapse_btn_rect.y() + (self.button_height - collapse_icon_h) // 2
+        )
+
+        collapse_icon_rect = QRect(
+            collapse_icon_x, collapse_icon_y, collapse_icon_w, collapse_icon_h
+        )
         collapse_icon.paint(painter, collapse_icon_rect)
 
     def mouseMoveEvent(self, event):
@@ -1672,22 +1963,26 @@ class CollapsibleSplitterHandle(QSplitterHandle):
 
             # 设置 Tooltip
             current_mode = "vertical"
-            lang = 'zh'
+            lang = "zh"
             if isinstance(self.parent(), CustomSplitter):
                 current_mode = getattr(self.parent(), "current_layout_mode", "vertical")
                 lang = getattr(self.parent(), "lang", "zh")
-            
+
             t = TRANSLATIONS[lang]
-            mode_text = t['layout_vertical'] if current_mode == "vertical" else t['layout_horizontal']
+            mode_text = (
+                t["layout_vertical"]
+                if current_mode == "vertical"
+                else t["layout_horizontal"]
+            )
             QToolTip.showText(event.globalPos(), mode_text)
 
         elif collapse_btn_rect.contains(event.pos()):
             self.setCursor(Qt.PointingHandCursor)
-            lang = 'zh'
+            lang = "zh"
             if isinstance(self.parent(), CustomSplitter):
                 lang = getattr(self.parent(), "lang", "zh")
             t = TRANSLATIONS[lang]
-            QToolTip.showText(event.globalPos(), t['sidebar_toggle'])
+            QToolTip.showText(event.globalPos(), t["sidebar_toggle"])
         else:
             self.setCursor(Qt.SplitHCursor)
             QToolTip.hideText()
@@ -1746,6 +2041,7 @@ class CollapsibleSplitterHandle(QSplitterHandle):
 
 class ClickableLabel(QLabel):
     """可点击的标签"""
+
     clicked = pyqtSignal()
 
     def __init__(self, *args, **kwargs):
@@ -1761,7 +2057,7 @@ class ClickableLabel(QLabel):
 class CustomSplitter(QSplitter):
     sig_toggle_layout = pyqtSignal()  # 新增信号
 
-    def __init__(self, orientation, parent=None, lang='zh'):
+    def __init__(self, orientation, parent=None, lang="zh"):
         super().__init__(orientation, parent)
         self.lang = lang
         self.setHandleWidth(32)  # 调整宽度以适应图标 (36 -> 32)
@@ -1856,7 +2152,7 @@ class CustomSplitter(QSplitter):
 
 
 # ===================== 核心配置 =====================
-VERSION = "1.0.3"  # 版本标记
+VERSION = "1.0.4"  # 版本标记
 FIXED_COLUMN_COUNT = 4  # 固定列数为4
 COLUMN_SPACING = 10  # 列间距
 ITEM_SPACING = 10  # 项间距
@@ -1892,19 +2188,118 @@ APP_NAME = "WaterfallImageViewer"
 # 解决中文路径问题（增强版）
 def fix_chinese_path():
     try:
-        # 控制台编码修复
-        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
-        ctypes.windll.kernel32.SetConsoleCP(65001)
+        # 修复：只在有控制台窗口时才设置控制台编码，避免打包后出现黑色窗口
+        # 检测是否有控制台窗口
+        console_handle = ctypes.windll.kernel32.GetConsoleWindow()
+        if console_handle != 0:
+            # 控制台编码修复（仅在存在控制台时）
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+
         # Qt路径编码修复
         os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = ""
         os.environ["PYTHONIOENCODING"] = "utf-8"
         os.environ["QT_CHARSET"] = "utf-8"
 
-        # 强制启用 WebEngine GPU 加速
-    # 移除可能导致不稳定的 native-gpu-memory-buffers
-    # os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--ignore-gpu-blacklist --enable-gpu-rasterization"
-    except Exception as e:
-        print(f"修复中文路径失败: {e}")
+        # 性能优化：智能启用 WebEngine GPU 硬件加速
+        _enable_gpu_acceleration()
+    except Exception:
+        pass  # 静默处理错误，避免触发控制台输出
+
+
+def _enable_gpu_acceleration():
+    """智能检测并启用 GPU 硬件加速（性能优化：提升 WebView 渲染性能）"""
+    try:
+        import subprocess
+        import winreg
+
+        gpu_info = ""
+
+        # 方法1: 尝试使用 PowerShell（Windows 10/11 推荐）
+        try:
+            # 增加 creationflags=subprocess.CREATE_NO_WINDOW 以防止弹出黑色窗口
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NO_WINDOW
+
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-Command",
+                    "Get-WmiObject Win32_VideoController | Select-Object -ExpandProperty Name",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=creation_flags,
+            )
+            if result.returncode == 0:
+                gpu_info = result.stdout.upper()
+        except:
+            pass
+
+        # 方法2: 如果PowerShell失败，尝试读取注册表
+        if not gpu_info:
+            try:
+                # 读取显示适配器注册表信息
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}",
+                )
+                for i in range(winreg.QueryInfoKey(key)[0]):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        subkey = winreg.OpenKey(key, subkey_name)
+                        try:
+                            driver_desc = winreg.QueryValueEx(subkey, "DriverDesc")[0]
+                            gpu_info += driver_desc.upper() + " "
+                        except:
+                            pass
+                        finally:
+                            winreg.CloseKey(subkey)
+                    except:
+                        pass
+                winreg.CloseKey(key)
+            except:
+                pass
+
+        # 方法3: 尝试使用dxdiag（如果存在）
+        if not gpu_info:
+            try:
+                creation_flags = 0
+                if sys.platform == "win32":
+                    creation_flags = subprocess.CREATE_NO_WINDOW
+
+                result = subprocess.run(
+                    ["dxdiag", "/t", "dxdiag_output.txt"],
+                    capture_output=True,
+                    timeout=10,
+                    creationflags=creation_flags,
+                )
+                # dxdiag 是异步的，我们使用其他方法
+            except:
+                pass
+
+        has_dedicated_gpu = any(
+            gpu in gpu_info for gpu in ["NVIDIA", "AMD", "ATI", "RADEON", "GEFORCE"]
+        )
+
+        if has_dedicated_gpu:
+            # 启用 GPU 加速（有独立显卡时）
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+                "--ignore-gpu-blacklist "
+                "--enable-gpu-rasterization "
+                "--enable-zero-copy "
+                "--disable-gpu-driver-bug-workarounds"
+            )
+        else:
+            # 集成显卡也启用基本加速，但使用保守设置
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+                "--enable-gpu-rasterization --disable-gpu-driver-bug-workarounds"
+            )
+    except Exception:
+        # 即使检测失败，也启用保守的GPU加速（静默处理错误）
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--enable-gpu-rasterization"
 
 
 # 路径转义处理（兼容特殊符号）
@@ -2015,14 +2410,14 @@ class MetadataCache:
         data_dir = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
         if not os.path.exists(data_dir):
             os.makedirs(data_dir, exist_ok=True)
-        
+
         self.db_path = os.path.join(data_dir, "metadata_cache.db")
         self._lock = QMutex()
         self._init_db()
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL") # 使用 WAL 模式提升并发读写性能
+            conn.execute("PRAGMA journal_mode=WAL")  # 使用 WAL 模式提升并发读写性能
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS image_metadata (
@@ -2035,23 +2430,49 @@ class MetadataCache:
             """)
             # 为路径建立索引以加快查询
             conn.execute("CREATE INDEX IF NOT EXISTS idx_path ON image_metadata(path)")
+            # 添加复合索引，加速基于路径和修改时间的缓存验证查询（性能优化）
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_path_mtime ON image_metadata(path, mtime)"
+            )
+            # 创建 EXIF 信息缓存表（性能优化：加速图片预览信息加载）
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS exif_cache (
+                    path TEXT PRIMARY KEY,
+                    width INTEGER,
+                    height INTEGER,
+                    format TEXT,
+                    camera_make TEXT,
+                    camera_model TEXT,
+                    capture_time TEXT,
+                    iso TEXT,
+                    aperture TEXT,
+                    exposure TEXT,
+                    focal_length TEXT,
+                    lens TEXT,
+                    mtime REAL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_exif_path ON exif_cache(path)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_exif_mtime ON exif_cache(path, mtime)"
+            )
 
     def get_metadata_batch(self, paths):
         """批量获取元数据，极大提升扫描性能"""
         if not paths:
             return {}
-        
+
         results = {}
         try:
             # 使用上下文管理器确保连接关闭
             with sqlite3.connect(self.db_path) as conn:
                 # SQLite 默认一次最多处理 999 个变量，我们分片处理
                 for i in range(0, len(paths), 900):
-                    chunk = paths[i:i+900]
+                    chunk = paths[i : i + 900]
                     placeholders = ",".join(["?"] * len(chunk))
                     cursor = conn.execute(
                         f"SELECT path, width, height, size, mtime FROM image_metadata WHERE path IN ({placeholders})",
-                        chunk
+                        chunk,
                     )
                     for row in cursor.fetchall():
                         results[row[0]] = (row[1], row[2], row[3], row[4])
@@ -2067,13 +2488,130 @@ class MetadataCache:
             with sqlite3.connect(self.db_path) as conn:
                 conn.executemany(
                     "INSERT OR REPLACE INTO image_metadata (path, width, height, size, mtime) VALUES (?, ?, ?, ?, ?)",
-                    [(item['path'], item['w'], item['h'], item['size'], item['mtime']) for item in items]
+                    [
+                        (
+                            item["path"],
+                            item["w"],
+                            item["h"],
+                            item["size"],
+                            item["mtime"],
+                        )
+                        for item in items
+                    ],
                 )
         except Exception as e:
             print(f"Error saving metadata batch: {e}")
 
+    def save_exif_cache(self, path, exif_info, mtime):
+        """保存 EXIF 信息到缓存（性能优化：加速图片预览信息加载）"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO exif_cache 
+                    (path, width, height, format, camera_make, camera_model, capture_time, 
+                     iso, aperture, exposure, focal_length, lens, mtime)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        path,
+                        exif_info.get("width"),
+                        exif_info.get("height"),
+                        exif_info.get("format"),
+                        exif_info.get("camera_make"),
+                        exif_info.get("camera_model"),
+                        exif_info.get("capture_time"),
+                        exif_info.get("iso"),
+                        exif_info.get("aperture"),
+                        exif_info.get("exposure"),
+                        exif_info.get("focal_length"),
+                        exif_info.get("lens"),
+                        mtime,
+                    ),
+                )
+        except Exception as e:
+            print(f"Error saving EXIF cache: {e}")
+
+    def get_exif_cache(self, path, mtime):
+        """从缓存获取 EXIF 信息（性能优化：加速图片预览信息加载）
+
+        Args:
+            path: 图片路径
+            mtime: 文件修改时间，用于验证缓存是否过期
+
+        Returns:
+            dict: EXIF 信息字典，如果缓存不存在或已过期则返回 None
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT width, height, format, camera_make, camera_model, capture_time, "
+                    "iso, aperture, exposure, focal_length, lens, mtime FROM exif_cache WHERE path = ?",
+                    (path,),
+                )
+                row = cursor.fetchone()
+                # 修复：浮点数比较使用容差，避免精度问题
+                if row and abs(row[11] - mtime) < 0.001:  # 验证 mtime 是否匹配
+                    return {
+                        "width": row[0],
+                        "height": row[1],
+                        "format": row[2],
+                        "camera_make": row[3],
+                        "camera_model": row[4],
+                        "capture_time": row[5],
+                        "iso": row[6],
+                        "aperture": row[7],
+                        "exposure": row[8],
+                        "focal_length": row[9],
+                        "lens": row[10],
+                    }
+                return None
+        except Exception as e:
+            print(f"Error getting EXIF cache: {e}")
+            return None
+
+
 # 全局缓存实例
 g_metadata_cache = MetadataCache()
+
+
+# ===================== LRU 图片缓存 (性能优化：防止内存泄漏) =====================
+class LRUImageCache:
+    """LRU缓存实现，限制最大缓存数量，自动淘汰最久未使用的图片"""
+
+    def __init__(self, max_size=200):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self._lock = QMutex()
+
+    def get(self, key):
+        with QMutexLocker(self._lock):
+            if key in self.cache:
+                # 移动到末尾（最近使用）
+                self.cache.move_to_end(key)
+                return self.cache[key]
+            return None
+
+    def put(self, key, value):
+        with QMutexLocker(self._lock):
+            if key in self.cache:
+                self.cache.move_to_end(key)
+            self.cache[key] = value
+            if len(self.cache) > self.max_size:
+                # 移除最久未使用的
+                self.cache.popitem(last=False)
+
+    def clear(self):
+        with QMutexLocker(self._lock):
+            self.cache.clear()
+
+    def __contains__(self, key):
+        with QMutexLocker(self._lock):
+            return key in self.cache
+
+    def __len__(self):
+        with QMutexLocker(self._lock):
+            return len(self.cache)
 
 
 class ScanSignals(QObject):
@@ -2097,9 +2635,9 @@ class ScanWorker(QRunnable):
     def run(self):
         img_data = []
         batch_data = []  # 临时存储当前批次
-        cache_save_batch = [] # 待写入缓存的批次
+        cache_save_batch = []  # 待写入缓存的批次
         current_batch_size = 10  # 初始批次较小，以便快速看到第一批图
-        max_batch_size = 100    # 随着加载进行，增加批次大小以提高效率
+        max_batch_size = 100  # 随着加载进行，增加批次大小以提高效率
 
         img_extensions = (
             ".jpg",
@@ -2141,39 +2679,38 @@ class ScanWorker(QRunnable):
             for root, _, files in walker:
                 if self.is_aborted:
                     return
-                
+
                 # 过滤出图片文件
                 img_files = [f for f in files if f.lower().endswith(img_extensions)]
                 if not img_files:
                     continue
-                
+
                 # 构建完整路径并获取文件状态（用于校验缓存是否失效）
                 file_info_list = []
                 for f in img_files:
-                    if self.is_aborted: return
+                    if self.is_aborted:
+                        return
                     f_path = os.path.join(root, f)
                     try:
                         st = os.stat(f_path)
-                        file_info_list.append({
-                            'path': f_path,
-                            'size': st.st_size,
-                            'mtime': st.st_mtime
-                        })
+                        file_info_list.append(
+                            {"path": f_path, "size": st.st_size, "mtime": st.st_mtime}
+                        )
                     except:
                         continue
-                
+
                 # 1. 批量从缓存读取元数据
-                all_paths = [info['path'] for info in file_info_list]
+                all_paths = [info["path"] for info in file_info_list]
                 cached_data = g_metadata_cache.get_metadata_batch(all_paths)
-                
+
                 for info in file_info_list:
                     if self.is_aborted:
                         return
-                    
-                    file_path = info['path']
-                    size_val = info['size']
-                    mtime_val = info['mtime']
-                    
+
+                    file_path = info["path"]
+                    size_val = info["size"]
+                    mtime_val = info["mtime"]
+
                     # 检查缓存命中且未过期
                     hit = False
                     if file_path in cached_data:
@@ -2191,14 +2728,16 @@ class ScanWorker(QRunnable):
                             batch_data.append(item)
                             count += 1
                             hit = True
-                    
+
                     if hit:
                         # 如果批次满了，立即发送
                         if len(batch_data) >= current_batch_size:
                             self.signals.batch_ready.emit(batch_data, self.scan_id)
                             batch_data = []
                             if current_batch_size < max_batch_size:
-                                current_batch_size = min(max_batch_size, current_batch_size + 10)
+                                current_batch_size = min(
+                                    max_batch_size, current_batch_size + 10
+                                )
                         continue
 
                     # 2. 缓存失效或不存在，使用 Pillow 解析
@@ -2238,7 +2777,9 @@ class ScanWorker(QRunnable):
                             self.signals.batch_ready.emit(batch_data, self.scan_id)
                             batch_data = []
                             if current_batch_size < max_batch_size:
-                                current_batch_size = min(max_batch_size, current_batch_size + 10)
+                                current_batch_size = min(
+                                    max_batch_size, current_batch_size + 10
+                                )
 
                     except Exception:
                         pass
@@ -2352,20 +2893,74 @@ class RoundedImageLabel(QLabel):
         self.img_pixmap = None
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setStyleSheet("QLabel { background-color: transparent; border: none; }")
-        
-        # 添加渐现效果支持
-        self.opacity_effect = QGraphicsOpacityEffect(self)
-        self.opacity_effect.setOpacity(0)
-        self.setGraphicsEffect(self.opacity_effect)
-        
-        self.fade_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
-        self.fade_animation.setDuration(300)
-        self.fade_animation.setStartValue(0)
-        self.fade_animation.setEndValue(1)
-        self.fade_animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+        # 性能优化：延迟创建动画效果，每个实例独立
+        self._opacity_effect = None
+        self._fade_animation = None
+
+    def _init_fade_effect(self):
+        """延迟初始化渐现效果，每个实例独立"""
+        if self._opacity_effect is None:
+            # 修复：不传递self作为parent，避免循环引用和销毁冲突
+            self._opacity_effect = QGraphicsOpacityEffect()
+            self._opacity_effect.setOpacity(0)
+            self.setGraphicsEffect(self._opacity_effect)
+        return self._opacity_effect
 
     def start_fade_in(self):
-        self.fade_animation.start()
+        """启动渐现动画，每个实例使用独立的动画对象"""
+        # 清理旧动画（修复：避免重复断开信号，简化清理逻辑）
+        if self._fade_animation:
+            # 停止动画并断开信号
+            self._fade_animation.stop()
+            try:
+                self._fade_animation.finished.disconnect(self._cleanup_animation)
+            except:
+                pass
+            # 安全删除：使用deleteLater但保留引用直到清理完成
+            animation = self._fade_animation
+            self._fade_animation = None
+            animation.deleteLater()
+
+        effect = self._init_fade_effect()
+        # 重置透明度
+        effect.setOpacity(0)
+
+        # 创建新的独立动画对象（修复：不传递parent参数，避免循环引用）
+        self._fade_animation = QPropertyAnimation(effect, b"opacity")
+        self._fade_animation.setDuration(200)
+        self._fade_animation.setStartValue(0)
+        self._fade_animation.setEndValue(1)
+        self._fade_animation.setEasingCurve(QEasingCurve.OutCubic)
+        # 连接完成信号（单次连接，新对象无需disconnect）
+        self._fade_animation.finished.connect(self._cleanup_animation)
+        self._fade_animation.start()
+
+    def _cleanup_animation(self):
+        """动画完成后的清理"""
+        # 修复：安全清理，避免重复deleteLater
+        animation = self._fade_animation
+        self._fade_animation = None  # 先清除引用
+        if animation:
+            animation.deleteLater()
+
+    def __del__(self):
+        """析构函数：确保资源被正确释放（修复：防止内存泄漏）"""
+        # 停止并清理动画
+        if self._fade_animation:
+            try:
+                self._fade_animation.stop()
+                self._fade_animation.deleteLater()
+            except:
+                pass
+            self._fade_animation = None
+        # 清理效果对象
+        if self._opacity_effect:
+            try:
+                self._opacity_effect.deleteLater()
+            except:
+                pass
+            self._opacity_effect = None
 
     def setPixmap(self, pixmap):
         self.img_pixmap = pixmap
@@ -2417,12 +3012,12 @@ class HTMLDelegate(QStyledItemDelegate):
     sig_toggle_theme = pyqtSignal()
     sig_clear_root = pyqtSignal(str)
 
-    def __init__(self, parent=None, lang='zh'):
+    def __init__(self, parent=None, lang="zh"):
         super().__init__(parent)
         self.lang = lang
         self.hover_index = QModelIndex()
         self.hover_pos = QPoint()
-        
+
         # 启用鼠标追踪以支持悬停效果
         if parent:
             parent.setMouseTracking(True)
@@ -2434,13 +3029,15 @@ class HTMLDelegate(QStyledItemDelegate):
         painter.save()
 
         # 加载自定义字体 SourceHanSans-Bold
-        font_id = QFontDatabase.addApplicationFont(resource_path("resources/SourceHanSans-Bold.ttc"))
-        custom_font_family = "SimHei" # Default fallback
+        font_id = QFontDatabase.addApplicationFont(
+            resource_path("resources/SourceHanSans-Bold.ttc")
+        )
+        custom_font_family = "SimHei"  # Default fallback
         if font_id != -1:
             families = QFontDatabase.applicationFontFamilies(font_id)
             if families:
                 custom_font_family = families[0]
-        
+
         # 检查是否为根节点 ("root_computer", "root_favorites", "root_history")
         item_type = index.data(Qt.UserRole)
         is_root_node = item_type in ["root_computer", "root_favorites", "root_history"]
@@ -2449,13 +3046,13 @@ class HTMLDelegate(QStyledItemDelegate):
         text_option = QTextOption()
         text_option.setWrapMode(QTextOption.NoWrap)
         doc.setDefaultTextOption(text_option)
-        
+
         # 如果是根节点，注入字体样式
         html_content = options.text
         if is_root_node:
             # 替换现有的 font-family 或在 style 中添加
             # 简单起见，直接包裹一层 span 设置字体
-            html_content = f'<span style="font-family: \'{custom_font_family}\'; font-weight: bold;">{html_content}</span>'
+            html_content = f"<span style=\"font-family: '{custom_font_family}'; font-weight: bold;\">{html_content}</span>"
 
         doc.setHtml(html_content)
 
@@ -2493,12 +3090,12 @@ class HTMLDelegate(QStyledItemDelegate):
             # 判断当前是否为暗黑模式
             text_color = option.palette.color(QPalette.Text)
             is_dark = text_color.lightness() > 128
-            
+
             # 计算位置：向右对齐
             icon_size = 27  # 放大1.5倍 (18 -> 27)
             icon_x = option.rect.right() - 35
             icon_y = text_rect.top() + (text_rect.height() - icon_size) / 2
-            
+
             # 计算交互/悬停区域
             hover_rect = QRectF(icon_x - 5, icon_y - 5, icon_size + 10, icon_size + 10)
             is_hovered = False
@@ -2509,7 +3106,7 @@ class HTMLDelegate(QStyledItemDelegate):
             # 使用全局 get_scan_mode_icon 绘制图标
             mode = "multi" if is_recursive else "single"
             icon = get_scan_mode_icon(mode, is_dark, is_hovered)
-            
+
             # 绘制图标
             icon_rect = QRect(int(icon_x), int(icon_y), icon_size, icon_size)
             # 设置绘制质量
@@ -2524,12 +3121,12 @@ class HTMLDelegate(QStyledItemDelegate):
             # 判断当前是否为暗黑模式
             text_color = option.palette.color(QPalette.Text)
             is_dark = text_color.lightness() > 128
-            
+
             # 计算位置：向右对齐
             icon_size = 27  # 保持与切换按钮一致
             icon_x = option.rect.right() - 35
             icon_y = text_rect.top() + (text_rect.height() - icon_size) / 2
-            
+
             # 计算交互/悬停区域
             hover_rect = QRectF(icon_x - 5, icon_y - 5, icon_size + 10, icon_size + 10)
             is_hovered = False
@@ -2539,7 +3136,7 @@ class HTMLDelegate(QStyledItemDelegate):
 
             # 使用全局 get_clear_action_icon 绘制图标
             icon = get_clear_action_icon(is_dark, is_hovered)
-            
+
             # 绘制图标
             icon_rect = QRect(int(icon_x), int(icon_y), icon_size, icon_size)
             # 设置绘制质量
@@ -2556,11 +3153,11 @@ class HTMLDelegate(QStyledItemDelegate):
             # 触发重绘
             if option.widget:
                 option.widget.update(index)
-            return False # 继续传递事件，不要吞掉
+            return False  # 继续传递事件，不要吞掉
 
         # 处理点击事件
         item_role = index.data(Qt.UserRole)
-        
+
         if item_role == "root_computer":
             if (
                 event.type() == QEvent.MouseButtonRelease
@@ -2617,7 +3214,7 @@ class HTMLDelegate(QStyledItemDelegate):
                 text_rect = style.subElementRect(
                     QStyle.SE_ItemViewItemText, options, options.widget
                 )
-                
+
                 # 图标区域 (向右对齐，与 paint 中一致)
                 icon_x = options.rect.right() - 35
                 # 扩大点击区域
@@ -2629,19 +3226,21 @@ class HTMLDelegate(QStyledItemDelegate):
                     # 判断当前是否为暗黑模式
                     text_color = options.palette.color(QPalette.Text)
                     is_dark = text_color.lightness() > 128
-                    
+
                     # 弹出菜单
                     menu = Win11Menu(parent=None, is_dark=is_dark)
-                    
+
                     # 使用统一的蓝色风格清除图标
                     icon = get_clear_action_icon(is_dark, is_hovered=False)
                     t = TRANSLATIONS[self.lang]
-                    clear_action = QAction(icon, t['menu_clear'], menu)
-                    
+                    clear_action = QAction(icon, t["menu_clear"], menu)
+
                     # 触发清除信号
-                    clear_action.triggered.connect(lambda: self.sig_clear_root.emit(item_role))
+                    clear_action.triggered.connect(
+                        lambda: self.sig_clear_root.emit(item_role)
+                    )
                     menu.addAction(clear_action)
-                    
+
                     menu.exec_(event.globalPos())
                     return True
 
@@ -2649,10 +3248,7 @@ class HTMLDelegate(QStyledItemDelegate):
 
     def helpEvent(self, event, view, option, index):
         item_role = index.data(Qt.UserRole)
-        if (
-            event.type() == QEvent.ToolTip
-            and item_role == "root_computer"
-        ):
+        if event.type() == QEvent.ToolTip and item_role == "root_computer":
             # 计算点击区域是否在图标上 (复用逻辑)
             options = QStyleOptionViewItem(option)
             self.initStyleOption(options, index)
@@ -2674,12 +3270,12 @@ class HTMLDelegate(QStyledItemDelegate):
                 if is_recursive:
                     QToolTip.showText(
                         event.globalPos(),
-                        t['tooltip_scan_multi'],
+                        t["tooltip_scan_multi"],
                     )
                 else:
                     QToolTip.showText(
                         event.globalPos(),
-                        t['tooltip_scan_single'],
+                        t["tooltip_scan_single"],
                     )
                 return True
 
@@ -2693,7 +3289,7 @@ class HTMLDelegate(QStyledItemDelegate):
                 text_rect = style.subElementRect(
                     QStyle.SE_ItemViewItemText, options, options.widget
                 )
-                
+
                 # 图标区域 (向右对齐，与 paint 中一致)
                 icon_x = options.rect.right() - 25
                 # 扩大点击区域
@@ -2702,7 +3298,7 @@ class HTMLDelegate(QStyledItemDelegate):
                 )
 
                 if icon_rect.contains(event.pos()):
-                    QToolTip.showText(event.globalPos(), t['tooltip_clear'])
+                    QToolTip.showText(event.globalPos(), t["tooltip_clear"])
                     return True
 
         return super().helpEvent(event, view, option, index)
@@ -2721,14 +3317,14 @@ class HTMLDelegate(QStyledItemDelegate):
 
 # 自定义文件系统模型（用于修改列头）
 class CustomFileSystemModel(QFileSystemModel):
-    def __init__(self, parent=None, lang='zh'):
+    def __init__(self, parent=None, lang="zh"):
         super().__init__(parent)
         self.lang = lang
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if section == 0 and orientation == Qt.Horizontal and role == Qt.DisplayRole:
             t = TRANSLATIONS[self.lang]
-            return t['my_computer']
+            return t["my_computer"]
         return super().headerData(section, orientation, role)
 
 
@@ -2885,8 +3481,25 @@ class PreviewWebEngineView(QWebEngineView):
 
 
 class HighQualityImagePreviewDialog(QDialog):
+    # 类级别的共享线程池（性能优化：避免每次创建都新建线程池）
+    _shared_thread_pool = None
+    _thread_pool_lock = QMutex()
+
+    @classmethod
+    def get_thread_pool(cls):
+        with QMutexLocker(cls._thread_pool_lock):
+            if cls._shared_thread_pool is None:
+                cls._shared_thread_pool = QThreadPool()
+                cls._shared_thread_pool.setMaxThreadCount(2)
+            return cls._shared_thread_pool
+
     def __init__(
-        self, img_path="", img_list=None, parent=None, thumb_rect_callback=None, lang='zh'
+        self,
+        img_path="",
+        img_list=None,
+        parent=None,
+        thumb_rect_callback=None,
+        lang="zh",
     ):
         super().__init__(parent)
         self.lang = lang
@@ -2908,7 +3521,7 @@ class HighQualityImagePreviewDialog(QDialog):
         self.is_dark = True
 
         # 窗口基础设置
-        self.setWindowTitle(t['preview_title'].format(""))
+        self.setWindowTitle(t["preview_title"].format(""))
         self.setModal(True)
         # 全屏无边框，背景透明
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
@@ -2919,9 +3532,8 @@ class HighQualityImagePreviewDialog(QDialog):
         self.screen_geo = QApplication.desktop().screenGeometry()
         self.resize(self.screen_geo.width(), self.screen_geo.height())
 
-        # 线程池
-        self.thread_pool = QThreadPool()
-        self.thread_pool.setMaxThreadCount(2)
+        # 使用共享线程池而不是创建新线程池
+        self.thread_pool = self.get_thread_pool()
 
         # 应用全屏半透明遮罩样式
         self.setStyleSheet(f"""
@@ -2955,7 +3567,7 @@ class HighQualityImagePreviewDialog(QDialog):
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setText(
-            t['loading_original'] if self.valid_img_path else t['no_valid_image']
+            t["loading_original"] if self.valid_img_path else t["no_valid_image"]
         )
         self.preview_label.setMouseTracking(True)
         # 启用右键菜单
@@ -2984,7 +3596,7 @@ class HighQualityImagePreviewDialog(QDialog):
         if not os.path.exists(html_path):
             t = TRANSLATIONS[self.lang]
             QMessageBox.critical(
-                self, t['error'], f"preview.html not found at: {html_path}"
+                self, t["error"], f"preview.html not found at: {html_path}"
             )
 
             # 使用 fromLocalFile 处理路径中的空格和特殊字符
@@ -3073,7 +3685,7 @@ class HighQualityImagePreviewDialog(QDialog):
         # 播放按钮
         self.btn_play = QPushButton("▶", self)
         self.btn_play.setFixedSize(40, 40)
-        self.btn_play.setToolTip(t['play_tooltip'])
+        self.btn_play.setToolTip(t["play_tooltip"])
         self.btn_play.setCursor(Qt.PointingHandCursor)
         self.btn_play.setStyleSheet("""
             QPushButton {
@@ -3136,7 +3748,7 @@ class HighQualityImagePreviewDialog(QDialog):
         self.scale_factor = 1.0
         self.pil_image = None
         self.preview_label.setText(
-            t['loading_original'] if self.valid_img_path else t['no_valid_image']
+            t["loading_original"] if self.valid_img_path else t["no_valid_image"]
         )
         self.preview_label.setPixmap(QPixmap())
         self.preview_label.adjustSize()
@@ -3148,7 +3760,9 @@ class HighQualityImagePreviewDialog(QDialog):
                 if sys.platform == "win32"
                 else self.valid_img_path
             )
-            self.setWindowTitle(t['preview_title'].format(os.path.basename(original_path)))
+            self.setWindowTitle(
+                t["preview_title"].format(os.path.basename(original_path))
+            )
             # 延迟加载，确保UI先渲染
             QTimer.singleShot(10, self._load_original_image)
             # 确保获得焦点以响应键盘
@@ -3156,7 +3770,7 @@ class HighQualityImagePreviewDialog(QDialog):
             self.setFocus()
             self.scroll_area.setFocus()
         else:
-            self.setWindowTitle(t['preview_title'].format(""))
+            self.setWindowTitle(t["preview_title"].format(""))
 
         # 隐藏浮层
         self.count_label.hide()
@@ -3185,7 +3799,7 @@ class HighQualityImagePreviewDialog(QDialog):
             self.is_playing = False
             self.btn_play.setText("▶")
             t = TRANSLATIONS[self.lang]
-            self.btn_play.setToolTip(t['play_tooltip'])
+            self.btn_play.setToolTip(t["play_tooltip"])
         super().closeEvent(event)
 
     def showEvent(self, event):
@@ -3410,9 +4024,7 @@ class HighQualityImagePreviewDialog(QDialog):
 
         # 1. 在资源管理器中打开
         open_folder_action = QAction(
-            get_folder_icon(is_dark=True),
-            t['menu_open_explorer'],
-            self
+            get_folder_icon(is_dark=True), t["menu_open_explorer"], self
         )
         open_folder_action.triggered.connect(self._open_in_explorer)
         menu.addAction(open_folder_action)
@@ -3421,16 +4033,14 @@ class HighQualityImagePreviewDialog(QDialog):
 
         # 2. 旋转
         action_left = QAction(
-            get_rotate_icon("left", is_dark=True), 
-            t['menu_rotate_left'], 
-            self
+            get_rotate_icon("left", is_dark=True), t["menu_rotate_left"], self
         )
         action_left.triggered.connect(lambda: self._rotate_image("left"))
         menu.addAction(action_left)
 
         action_right = QAction(
             get_rotate_icon("right", is_dark=True),
-            t['menu_rotate_right'],
+            t["menu_rotate_right"],
             self,
         )
         action_right.triggered.connect(lambda: self._rotate_image("right"))
@@ -3440,17 +4050,13 @@ class HighQualityImagePreviewDialog(QDialog):
 
         # 3. 复制/移动
         action_copy = QAction(
-            get_copy_move_icon("copy", is_dark=True),
-            t['menu_copy_to'],
-            self
+            get_copy_move_icon("copy", is_dark=True), t["menu_copy_to"], self
         )
         action_copy.triggered.connect(self._copy_image)
         menu.addAction(action_copy)
 
         action_move = QAction(
-            get_copy_move_icon("move", is_dark=True),
-            t['menu_move_to'],
-            self
+            get_copy_move_icon("move", is_dark=True), t["menu_move_to"], self
         )
         action_move.triggered.connect(self._move_image)
         menu.addAction(action_move)
@@ -3458,11 +4064,7 @@ class HighQualityImagePreviewDialog(QDialog):
         menu.addSeparator()
 
         # 4. 删除
-        action_delete = QAction(
-            get_delete_icon(is_dark=True), 
-            t['menu_delete'], 
-            self
-        )
+        action_delete = QAction(get_delete_icon(is_dark=True), t["menu_delete"], self)
         action_delete.triggered.connect(self._delete_image)
         menu.addAction(action_delete)
 
@@ -3470,7 +4072,8 @@ class HighQualityImagePreviewDialog(QDialog):
 
     def _rotate_image(self, direction):
         """旋转图片并更新预览"""
-        if not self.valid_img_path: return
+        if not self.valid_img_path:
+            return
         if self.parent_window:
             if direction == "left":
                 self.parent_window.sig_rotate_left.emit(self.valid_img_path)
@@ -3481,13 +4084,15 @@ class HighQualityImagePreviewDialog(QDialog):
 
     def _copy_image(self):
         """复制图片"""
-        if not self.valid_img_path: return
+        if not self.valid_img_path:
+            return
         if self.parent_window:
             self.parent_window.sig_copy_image.emit(self.valid_img_path)
 
     def _move_image(self):
         """移动图片"""
-        if not self.valid_img_path: return
+        if not self.valid_img_path:
+            return
         if self.parent_window:
             self.parent_window.sig_move_image.emit(self.valid_img_path)
             # 移动后关闭预览
@@ -3495,7 +4100,8 @@ class HighQualityImagePreviewDialog(QDialog):
 
     def _delete_image(self):
         """删除图片"""
-        if not self.valid_img_path: return
+        if not self.valid_img_path:
+            return
         if self.parent_window:
             self.parent_window.sig_delete_image.emit(self.valid_img_path)
             # 删除后关闭预览
@@ -3509,7 +4115,7 @@ class HighQualityImagePreviewDialog(QDialog):
         try:
             path = os.path.abspath(self.valid_img_path)
             if sys.platform == "win32":
-                subprocess.run(["explorer", "/select,", path])
+                subprocess.run(["explorer", "/select,", path], creationflags=subprocess.CREATE_NO_WINDOW)
             elif sys.platform == "darwin":
                 subprocess.run(["open", "-R", path])
             else:
@@ -3523,11 +4129,11 @@ class HighQualityImagePreviewDialog(QDialog):
         if self.is_playing:
             self.play_timer.start()
             self.btn_play.setText("⏸")
-            self.btn_play.setToolTip(t['pause_tooltip'])
+            self.btn_play.setToolTip(t["pause_tooltip"])
         else:
             self.play_timer.stop()
             self.btn_play.setText("▶")
-            self.btn_play.setToolTip(t['play_tooltip'])
+            self.btn_play.setToolTip(t["play_tooltip"])
 
     def _auto_play_next(self):
         """自动播放下一张（支持循环）"""
@@ -3580,7 +4186,7 @@ class HighQualityImagePreviewDialog(QDialog):
             path = safe_path(path)
             if not path or not os.path.exists(path) or not os.path.isfile(path):
                 t = TRANSLATIONS[self.lang]
-                self.preview_label.setText(t['invalid_image_path'])
+                self.preview_label.setText(t["invalid_image_path"])
                 return
 
             # 保存规范化路径到当前实例
@@ -3588,7 +4194,7 @@ class HighQualityImagePreviewDialog(QDialog):
 
             # 显示加载状态
             t = TRANSLATIONS[self.lang]
-            self.preview_label.setText(t['loading_original'])
+            self.preview_label.setText(t["loading_original"])
             self.preview_label.setPixmap(QPixmap())  # 清空旧图
             self.original_image = QImage()  # 重置
             self.pil_image = None
@@ -3918,7 +4524,7 @@ class HighQualityImagePreviewDialog(QDialog):
     def _on_web_load_finished(self, success):
         if not success:
             t = TRANSLATIONS[self.lang]
-            QMessageBox.warning(self, t['load_error'], t['preview_load_fail'])
+            QMessageBox.warning(self, t["load_error"], t["preview_load_fail"])
 
         self.is_web_loaded = True
         theme_info = THEME_COLORS.get(CURRENT_THEME_COLOR, THEME_COLORS["blue"])
@@ -4020,7 +4626,7 @@ class AdaptiveWaterfallWidget(QWidget):
         self.last_width = 0  # 记录上一次宽度
         self.all_img_paths = []  # 存储所有图片路径，供预览翻页使用
         self.loaded_idx = 0
-        self.image_cache = {}
+        self.image_cache = LRUImageCache(max_size=200)  # LRU缓存，限制最多200张缩略图
         self.is_loading = False
         self.screen_load_count = 0
         self.current_task_id = 0
@@ -4076,10 +4682,10 @@ class AdaptiveWaterfallWidget(QWidget):
             item = self.horizontal_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        
+
         # 使用传入的列数，否则使用全局定义的列数
         current_column_count = count if count is not None else FIXED_COLUMN_COUNT
-        
+
         for _ in range(current_column_count):
             col_widget = QWidget()
             col_layout = QVBoxLayout(col_widget)
@@ -4124,7 +4730,7 @@ class AdaptiveWaterfallWidget(QWidget):
             # 获取屏幕总宽度用于判断是否需要重置列数
             screen_width = QApplication.desktop().screenGeometry().width()
             main_window_width = self.window().width()
-            
+
             # 响应式逻辑：当窗口宽度小于屏幕总宽度的 2/3 时，自动重置为 3 列
             if main_window_width < (screen_width * 2 / 3):
                 target_column_count = 3
@@ -4150,15 +4756,15 @@ class AdaptiveWaterfallWidget(QWidget):
             # 只有当列数发生变化时才重新初始化列布局，否则只更新宽度
             column_count_changed = target_column_count != len(self.columns)
             self.col_width = new_col_width
-            
+
             if column_count_changed:
                 self._cancel_all_tasks()
-                self.image_cache.clear()
+                # 性能优化：列数改变时也不清空缓存，保留图片数据
+                # 仅清空布局状态，重新初始化列
                 self._init_fixed_columns(target_column_count)
             else:
                 # 列数没变，只停止当前任务并清空部分状态
                 self._cancel_all_tasks()
-                # 注意：这里不清空 image_cache，允许复用（虽然尺寸可能略有偏差，但能减少闪烁）
                 # 清空现有控件，准备重新填充
                 for col_layout in self.columns:
                     for i in reversed(range(col_layout.count())):
@@ -4172,8 +4778,8 @@ class AdaptiveWaterfallWidget(QWidget):
             if self.all_img_paths:
                 self.loaded_idx = 0
                 self.current_task_id += 1
-                # 重新加载第一屏图片
-                self._load_batch(0, self.screen_load_count)
+                # 性能优化：使用智能重新布局，优先使用缓存的图片
+                self._smart_reload_images()
         except Exception as e:
             print(f"调整尺寸失败: {e}")
 
@@ -4229,8 +4835,9 @@ class AdaptiveWaterfallWidget(QWidget):
         self.pending_tasks.clear()
         for i in range(start_idx, end_idx):
             path = self.all_img_paths[i]
-            if path in self.image_cache:
-                pixmap, w, h = self.image_cache[path]
+            cached = self.image_cache.get(path)
+            if cached:
+                pixmap, w, h = cached
                 self._add_image_to_column(path, pixmap, w, h)
                 continue
             task = ImageLoadTask(path, self.col_width, current_task_id)
@@ -4251,7 +4858,7 @@ class AdaptiveWaterfallWidget(QWidget):
         if pixmap.isNull():
             self._check_load_complete()
             return
-        self.image_cache[path] = (pixmap, w, h)
+        self.image_cache.put(path, (pixmap, w, h))
         self._add_image_to_column(path, pixmap, w, h)
         self._check_load_complete()
 
@@ -4259,6 +4866,27 @@ class AdaptiveWaterfallWidget(QWidget):
         self.pending_tasks = [t for t in self.pending_tasks if not t.is_finished]
         if len(self.pending_tasks) == 0 and self.thread_pool.activeThreadCount() == 0:
             self.is_loading = False
+
+    def _smart_reload_images(self):
+        """智能重新加载图片（性能优化：优先使用缓存，分批加载）"""
+        if not self.all_img_paths:
+            return
+
+        # 首先尝试从缓存中恢复已加载的图片
+        cached_count = 0
+        for path in self.all_img_paths[: self.screen_load_count]:
+            cached = self.image_cache.get(path)
+            if cached:
+                pixmap, w, h = cached
+                self._add_image_to_column(path, pixmap, w, h)
+                cached_count += 1
+                self.loaded_idx = max(
+                    self.loaded_idx, self.all_img_paths.index(path) + 1
+                )
+
+        # 然后加载剩余未缓存的图片
+        if self.loaded_idx < len(self.all_img_paths):
+            self._load_batch(self.loaded_idx, self.screen_load_count)
 
     def _add_image_to_column(self, path, pixmap, w, h):
         if not self.columns:
@@ -4288,16 +4916,16 @@ class AdaptiveWaterfallWidget(QWidget):
                     )
                     self.preview_dialog.exec_()
             except Exception as e:
-                t = TRANSLATIONS[getattr(self.window(), 'lang', 'zh')]
-                error_msg = t['open_preview_fail'].format(str(e)[:50])
+                t = TRANSLATIONS[getattr(self.window(), "lang", "zh")]
+                error_msg = t["open_preview_fail"].format(str(e)[:50])
                 print(error_msg)
-                QMessageBox.warning(self.parent(), t['preview_fail'], error_msg)
+                QMessageBox.warning(self.parent(), t["preview_fail"], error_msg)
 
         label.mousePressEvent = lambda e, p=path: safe_show_preview(p)
         label.setPixmap(pixmap)
         self.columns[min_idx].addWidget(label)
         self.col_heights[min_idx] += h + ITEM_SPACING
-        
+
         # 启动渐现动画
         label.start_fade_in()
 
@@ -4330,15 +4958,19 @@ class ImageViewerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings(APP_COMPANY, APP_NAME)
-        
+
         # 加载皮肤颜色
         global CURRENT_THEME_COLOR
         saved_theme = self.settings.value("theme_color", "blue", type=str)
         if saved_theme in THEME_COLORS:
             CURRENT_THEME_COLOR = saved_theme
-            
+
         saved_lang = self.settings.value("language", "", type=str)
-        self.lang = _normalize_lang_code(saved_lang) if saved_lang else _detect_system_lang_code()
+        self.lang = (
+            _normalize_lang_code(saved_lang)
+            if saved_lang
+            else _detect_system_lang_code()
+        )
         if self.lang not in TRANSLATIONS:
             self.lang = _detect_system_lang_code()
         t = TRANSLATIONS.get(self.lang, TRANSLATIONS["zh"])
@@ -4408,13 +5040,13 @@ class ImageViewerWindow(QMainWindow):
         toolbar_layout = QHBoxLayout(self.toolbar)
         toolbar_layout.setContentsMargins(10, 5, 10, 5)
         toolbar_layout.setSpacing(10)
-        
+
         toolbar_layout.addStretch()
 
         # 皮肤切换按钮
         self.skin_btn = HoverButton(get_skin_icon)
         self.skin_btn.setFixedSize(30, 30)
-        self.skin_btn.setToolTip(t.get('theme_skin', '皮肤颜色'))
+        self.skin_btn.setToolTip(t.get("theme_skin", "皮肤颜色"))
         self.skin_btn.setCursor(Qt.PointingHandCursor)
         self.skin_btn.clicked.connect(self._on_skin_clicked)
         toolbar_layout.addWidget(self.skin_btn)
@@ -4431,7 +5063,7 @@ class ImageViewerWindow(QMainWindow):
         # 使用说明按钮
         self.help_btn = HoverButton(get_help_icon)
         self.help_btn.setFixedSize(30, 30)
-        self.help_btn.setToolTip(t['use_guide'])
+        self.help_btn.setToolTip(t["use_guide"])
         self.help_btn.setCursor(Qt.PointingHandCursor)
         self.help_btn.clicked.connect(self._on_help_clicked)
         toolbar_layout.addWidget(self.help_btn)
@@ -4527,25 +5159,27 @@ class ImageViewerWindow(QMainWindow):
 
         # 扫描模式标签（最左侧）
         t = TRANSLATIONS[self.lang]
-        self.scan_mode_label = ClickableLabel(t['scan_mode_single'])
-        self.scan_mode_label.setToolTip(t['scan_mode_tooltip'].format(t['scan_mode_single']))
+        self.scan_mode_label = ClickableLabel(t["scan_mode_single"])
+        self.scan_mode_label.setToolTip(
+            t["scan_mode_tooltip"].format(t["scan_mode_single"])
+        )
         self.scan_mode_label.setStyleSheet("padding: 0 10px;")
         self.scan_mode_label.clicked.connect(self._toggle_scan_mode)
         self.status_bar.addWidget(self.scan_mode_label)
 
-        self.progress_label = QLabel(t['ready'])
-        self.count_label = QLabel(t['image_count'].format(0, 0))
+        self.progress_label = QLabel(t["ready"])
+        self.count_label = QLabel(t["image_count"].format(0, 0))
         self.status_bar.addWidget(self.progress_label)
 
         self.image_count = 0  # 记录当前图片总数
-        self.original_img_data = [] # 原始图片数据（用于过滤）
+        self.original_img_data = []  # 原始图片数据（用于过滤）
         self.current_img_data = []  # 当前图片数据（过滤后）
         self.current_sort_mode = "name_asc"  # 当前排序模式
         self.current_layout_mode = "vertical"  # 当前布局模式
-        
+
         t = TRANSLATIONS[self.lang]
-        self.current_format_filter = t['all_formats']
-        self.current_size_filter = t['all_sizes']
+        self.current_format_filter = t["all_formats"]
+        self.current_size_filter = t["all_sizes"]
         self.current_search_text = ""  # 保存搜索关键字
 
         # 浮动搜索框
@@ -4585,7 +5219,9 @@ class ImageViewerWindow(QMainWindow):
 
     def _get_ordered_lang_codes(self):
         preferred = ["zh", "zh_tw", "en", "ja", "fr", "de"]
-        available = [c for c in TRANSLATIONS.keys() if isinstance(TRANSLATIONS.get(c), dict)]
+        available = [
+            c for c in TRANSLATIONS.keys() if isinstance(TRANSLATIONS.get(c), dict)
+        ]
         available = sorted(set(_normalize_lang_code(c) for c in available))
         ordered = [c for c in preferred if c in available]
         ordered.extend([c for c in available if c not in ordered])
@@ -4602,10 +5238,10 @@ class ImageViewerWindow(QMainWindow):
         for code in self._get_ordered_lang_codes():
             pack = TRANSLATIONS.get(code) or {}
             name = pack.get("language_name") or code
-            
+
             # 为每种语言生成对应的字符图标
             lang_icon = get_lang_icon(code, self.is_dark_theme)
-            
+
             self.lang_combo.addItem(lang_icon, "", code)
             i = self.lang_combo.count() - 1
             self.lang_combo.setItemData(i, name, Qt.ToolTipRole)
@@ -4654,101 +5290,115 @@ class ImageViewerWindow(QMainWindow):
     def _retranslate_ui(self):
         """更新界面所有文本"""
         t = TRANSLATIONS[self.lang]
-        self.setWindowTitle(t['app_title'])
-        
+        self.setWindowTitle(t["app_title"])
+
         # 工具栏
         if hasattr(self, "floating_search"):
-            self.floating_search.input.setPlaceholderText(t['search_placeholder'])
-        
+            self.floating_search.input.setPlaceholderText(t["search_placeholder"])
+
         # 扫描模式和工具提示
-        mode_text = t['scan_mode_multi'] if self.is_recursive_mode else t['scan_mode_single']
+        mode_text = (
+            t["scan_mode_multi"] if self.is_recursive_mode else t["scan_mode_single"]
+        )
         self.scan_mode_label.setText(mode_text)
-        self.scan_mode_label.setToolTip(t['scan_mode_tooltip'].format(mode_text))
-        
+        self.scan_mode_label.setToolTip(t["scan_mode_tooltip"].format(mode_text))
+
         if hasattr(self, "lang_combo"):
-            self.lang_combo.setToolTip(t['lang_tooltip'])
-        
-        self.help_btn.setToolTip(t['use_guide'])
+            self.lang_combo.setToolTip(t["lang_tooltip"])
+
+        self.help_btn.setToolTip(t["use_guide"])
         self.help_btn.setIcon(get_help_icon(self.is_dark_theme))
 
         # 格式和尺寸筛选文本更新
-        self.current_format_filter = t['all_formats']
-        self.current_size_filter = t['all_sizes']
-        
+        self.current_format_filter = t["all_formats"]
+        self.current_size_filter = t["all_sizes"]
+
         # 状态栏
         if not self.is_scanning:
-            self.progress_label.setText(t['ready'])
-        
+            self.progress_label.setText(t["ready"])
+
         # 更新目录树根节点文本
         if hasattr(self, "computer_item"):
-            self.computer_item.setText(t['this_pc'])
+            self.computer_item.setText(t["this_pc"])
         if hasattr(self, "favorites_item"):
-            self.favorites_item.setText(t['favorites'])
+            self.favorites_item.setText(t["favorites"])
         if hasattr(self, "history_item"):
-            self.history_item.setText(t['history'])
+            self.history_item.setText(t["history"])
 
-        # 更新 WebEngineView 语言并重新加载以应用 HTML 翻译
+        # 更新 WebEngineView 语言但不重新加载页面（修复：切换语言时不清空瀑布流）
         if hasattr(self, "web_view") and self.web_view:
             self.web_view.lang = self.lang
-            html_path = resource_path("waterfall.html").replace("\\", "/")
-            qurl = QUrl.fromLocalFile(html_path)
-            qurl.setQuery(f"lang={self.lang}")
-            self.web_view.load(qurl)
-        
+            # 通过 JavaScript 动态更新语言，而不是重新加载页面
+            self._send_web_language_pack()
+
         # 更新 Splitter 语言
         if hasattr(self, "splitter") and self.splitter:
             self.splitter.lang = self.lang
-            
+
         # 更新树代理语言
         if hasattr(self, "tree_delegate"):
             self.tree_delegate.lang = self.lang
 
     def _send_exif_info(self, path):
-        """读取 EXIF 并发送给 Web"""
+        """读取 EXIF 并发送给 Web（性能优化：使用数据库缓存加速）"""
         try:
-            info = {}
             # 1. 基本文件信息
-            info['filename'] = os.path.basename(path)
+            info = {}
+            info["filename"] = os.path.basename(path)
             stat = os.stat(path)
             size_mb = stat.st_size / (1024 * 1024)
-            info['filesize'] = f"{size_mb:.2f} MB"
-            info['created'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat.st_ctime))
-            info['modified'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat.st_mtime))
+            info["filesize"] = f"{size_mb:.2f} MB"
+            info["created"] = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(stat.st_ctime)
+            )
+            info["modified"] = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)
+            )
 
-            # 2. 图片尺寸
-            try:
-                with Image.open(path) as img:
-                    info['width'] = img.width
-                    info['height'] = img.height
-                    info['format'] = img.format
-                    
-                    # 3. EXIF 数据
-                    exif_data = img._getexif()
-                    if exif_data:
-                        for tag, value in exif_data.items():
-                            tag_name = ExifTags.TAGS.get(tag, tag)
-                            if tag_name == 'Make':
-                                info['camera_make'] = str(value)
-                            elif tag_name == 'Model':
-                                info['camera_model'] = str(value)
-                            elif tag_name == 'DateTimeOriginal':
-                                info['capture_time'] = str(value)
-                            elif tag_name == 'ISOSpeedRatings':
-                                info['iso'] = str(value)
-                            elif tag_name == 'FNumber':
-                                info['aperture'] = f"f/{float(value):.1f}"
-                            elif tag_name == 'ExposureTime':
-                                info['exposure'] = f"{value}s"
-                            elif tag_name == 'FocalLength':
-                                info['focal_length'] = f"{float(value):.1f}mm"
-                            elif tag_name == 'LensModel':
-                                info['lens'] = str(value)
-            except Exception as e:
-                print(f"Error reading image details: {e}")
+            # 性能优化：先尝试从缓存获取 EXIF 信息
+            cached_exif = g_metadata_cache.get_exif_cache(path, stat.st_mtime)
+            if cached_exif:
+                info.update(cached_exif)
+                info["from_cache"] = True
+            else:
+                # 2. 图片尺寸和 EXIF 数据
+                try:
+                    with Image.open(path) as img:
+                        info["width"] = img.width
+                        info["height"] = img.height
+                        info["format"] = img.format
+
+                        # 3. EXIF 数据
+                        exif_data = img._getexif()
+                        if exif_data:
+                            for tag, value in exif_data.items():
+                                tag_name = ExifTags.TAGS.get(tag, tag)
+                                if tag_name == "Make":
+                                    info["camera_make"] = str(value)
+                                elif tag_name == "Model":
+                                    info["camera_model"] = str(value)
+                                elif tag_name == "DateTimeOriginal":
+                                    info["capture_time"] = str(value)
+                                elif tag_name == "ISOSpeedRatings":
+                                    info["iso"] = str(value)
+                                elif tag_name == "FNumber":
+                                    info["aperture"] = f"f/{float(value):.1f}"
+                                elif tag_name == "ExposureTime":
+                                    info["exposure"] = f"{value}s"
+                                elif tag_name == "FocalLength":
+                                    info["focal_length"] = f"{float(value):.1f}mm"
+                                elif tag_name == "LensModel":
+                                    info["lens"] = str(value)
+
+                    # 性能优化：保存到缓存
+                    g_metadata_cache.save_exif_cache(path, info, stat.st_mtime)
+                    info["from_cache"] = False
+                except Exception as e:
+                    print(f"Error reading image details: {e}")
 
             # 发送给 JS
             # 需要转义 JSON 中的引号等
-            json_str = json.dumps(info).replace('\\', '\\\\').replace("'", "\\'")
+            json_str = json.dumps(info).replace("\\", "\\\\").replace("'", "\\'")
             self.web_view.page().runJavaScript(
                 f"if (typeof showExifInfo === 'function') {{ showExifInfo('{json_str}'); }}"
             )
@@ -4772,37 +5422,37 @@ class ImageViewerWindow(QMainWindow):
             path = img.get("path", "")
             if not path:
                 continue
-                
+
             filename = os.path.basename(path).lower()
-            
+
             # 1. 搜索文件名
             if search_text and search_text not in filename:
                 continue
-                
+
             # 2. 格式筛选
-            if format_filter != t['all_formats']:
-                ext = os.path.splitext(filename)[1].lower().replace('.', '')
+            if format_filter != t["all_formats"]:
+                ext = os.path.splitext(filename)[1].lower().replace(".", "")
                 if format_filter == "RAW":
-                    if ext not in ['arw', 'cr2', 'cr3', 'nef', 'dng', 'raf', 'orf']:
+                    if ext not in ["arw", "cr2", "cr3", "nef", "dng", "raf", "orf"]:
                         continue
                 elif format_filter.lower() != ext:
                     continue
-                    
+
             # 3. 尺寸筛选
-            if size_filter != t['all_sizes']:
+            if size_filter != t["all_sizes"]:
                 try:
                     # 优先使用缓存的 size
                     size = img.get("size")
                     if size is None:
                         size = os.path.getsize(path)
-                        
-                    if size_filter == t['large_img']:
+
+                    if size_filter == t["large_img"]:
                         if size <= 1024 * 1024:
                             continue
-                    elif size_filter == t['medium_img']:
+                    elif size_filter == t["medium_img"]:
                         if size < 100 * 1024 or size > 1024 * 1024:
                             continue
-                    elif size_filter == t['small_img']:
+                    elif size_filter == t["small_img"]:
                         if size >= 100 * 1024:
                             continue
                 except:
@@ -4811,10 +5461,10 @@ class ImageViewerWindow(QMainWindow):
             filtered_data.append(img)
 
         self.current_img_data = filtered_data
-        
+
         # 应用当前排序
         self._apply_sort()
-        
+
         self._update_web_view_images()
 
     def _on_floating_search(self, text):
@@ -4828,10 +5478,10 @@ class ImageViewerWindow(QMainWindow):
         if event.key() == Qt.Key_Control:
             if event.isAutoRepeat():
                 return
-                
-            current_time = time.time() * 1000 # 毫秒
+
+            current_time = time.time() * 1000  # 毫秒
             # 增加响应时间范围至 500ms
-            if current_time - self.last_ctrl_press_time < 500: 
+            if current_time - self.last_ctrl_press_time < 500:
                 # 弹出搜索框
                 if hasattr(self, "floating_search"):
                     # 居中显示在主窗口
@@ -4844,12 +5494,12 @@ class ImageViewerWindow(QMainWindow):
                     self.floating_search.show()
                     self.floating_search.raise_()
                     self.floating_search.activateWindow()
-                self.last_ctrl_press_time = 0 # 重置
-                event.accept() # 标记已处理
+                self.last_ctrl_press_time = 0  # 重置
+                event.accept()  # 标记已处理
                 return
             else:
                 self.last_ctrl_press_time = current_time
-        
+
         super().keyPressEvent(event)
 
     def _on_help_clicked(self):
@@ -4864,7 +5514,9 @@ class ImageViewerWindow(QMainWindow):
         if os.path.exists(help_path):
             QDesktopServices.openUrl(QUrl.fromLocalFile(help_path))
         else:
-            QMessageBox.information(self, t['info'], t['help_not_found'].format(help_path))
+            QMessageBox.information(
+                self, t["info"], t["help_not_found"].format(help_path)
+            )
 
     def _toggle_scan_mode(self):
         """切换扫描模式（一级/多级）"""
@@ -4908,7 +5560,7 @@ class ImageViewerWindow(QMainWindow):
             # 初始化主题和皮肤颜色
             theme_info = THEME_COLORS.get(CURRENT_THEME_COLOR, THEME_COLORS["blue"])
             skin_color = theme_info["normal"]
-            
+
             self.web_view.page().runJavaScript(
                 f"if (typeof setTheme === 'function') {{ setTheme({str(self.is_dark_theme).lower()}); }}"
             )
@@ -4940,7 +5592,7 @@ class ImageViewerWindow(QMainWindow):
                     # 去除可能的时间戳后缀
                     if "|" in content:
                         content = content.split("|")[0]
-                    
+
                     path = content
                     # 路径处理
                     if path.startswith("file:///"):
@@ -4948,8 +5600,9 @@ class ImageViewerWindow(QMainWindow):
                     if sys.platform == "win32":
                         path = path.replace("/", "\\")
                     from urllib.parse import unquote
+
                     path = unquote(path)
-                    
+
                     full_path = safe_path(path)
                     if os.path.exists(full_path):
                         self._send_exif_info(full_path)
@@ -4977,7 +5630,7 @@ class ImageViewerWindow(QMainWindow):
                         display_idx = max(0, min(current_idx + 1, self.image_count))
                         t = TRANSLATIONS[self.lang]
                         self.count_label.setText(
-                            t['image_count'].format(display_idx, self.image_count)
+                            t["image_count"].format(display_idx, self.image_count)
                         )
                 except Exception:
                     pass
@@ -5056,10 +5709,10 @@ class ImageViewerWindow(QMainWindow):
             # 拖动期间暂停 Webview 更新，防止 GPU 纹理交换导致的卡顿
             if self.web_view.isVisible():
                 self.web_view.setUpdatesEnabled(False)
-            
+
             # 使用定时器节流通知 JS，频率略微降低以保证 Python 端流畅
             self._splitter_timer.start(60)
-            
+
             # 同样使用 _resize_timer 来恢复更新
             if not hasattr(self, "_resize_timer"):
                 self._resize_timer = QTimer()
@@ -5103,9 +5756,11 @@ class ImageViewerWindow(QMainWindow):
         if img.format() != QImage.Format_ARGB32:
             img = img.convertToFormat(QImage.Format_ARGB32)
         painter = QPainter(img)
-        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-        painter.fillRect(img.rect(), color)
-        painter.end()
+        try:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            painter.fillRect(img.rect(), color)
+        finally:
+            painter.end()
         return QIcon(QPixmap.fromImage(img))
 
     def _apply_complete_theme(self):
@@ -5122,7 +5777,9 @@ class ImageViewerWindow(QMainWindow):
             self.floating_search.is_dark = self.is_dark_theme
             self.floating_search.apply_style()
             # 更新图标，使用 50x50 尺寸
-            self.floating_search.icon_label.setPixmap(get_search_btn_icon(self.is_dark_theme).pixmap(50, 50))
+            self.floating_search.icon_label.setPixmap(
+                get_search_btn_icon(self.is_dark_theme).pixmap(50, 50)
+            )
 
         # 图标着色配置 (暗黑模式下使用浅色图标)
         target_color = QColor("#E0E0E0") if self.is_dark_theme else None
@@ -5131,7 +5788,11 @@ class ImageViewerWindow(QMainWindow):
         t = TRANSLATIONS[self.lang]
         if hasattr(self, "computer_item"):
             icon = get_computer_icon(self.is_dark_theme)
-            self.computer_item.setToolTip(t['theme_tooltip_dark'] if self.is_dark_theme else t['theme_tooltip_light'])
+            self.computer_item.setToolTip(
+                t["theme_tooltip_dark"]
+                if self.is_dark_theme
+                else t["theme_tooltip_light"]
+            )
             self.computer_item.setIcon(icon)
 
         # 2. 更新收藏目录图标
@@ -5304,7 +5965,7 @@ class ImageViewerWindow(QMainWindow):
         try:
             # 读取存储的历史目录列表
             history_data = self.settings.value("history_dirs", [], type=list)
-            
+
             if not check_exists:
                 # 初始加载不检查存在性，直接安全路径处理
                 self.history_dirs = [safe_path(path) for path in history_data]
@@ -5323,7 +5984,7 @@ class ImageViewerWindow(QMainWindow):
         """从配置加载收藏目录"""
         try:
             favorites_data = self.settings.value("favorites_dirs", [], type=list)
-            
+
             if not check_exists:
                 # 初始加载不检查存在性
                 self.favorites_dirs = [safe_path(path) for path in favorites_data]
@@ -5382,11 +6043,10 @@ class ImageViewerWindow(QMainWindow):
 
         safe_dir = safe_path(dir_path)
 
-        # 判断当前是否为暗黑模式
-        text_color = self.palette().color(QPalette.Text)
-        is_dark = text_color.lightness() > 128
+        # 获取暗黑模式状态 (直接从属性获取比计算 palette 快)
+        is_dark = self.is_dark_theme
 
-        # 判断点击的是否是收藏目录下的项目
+        # 判断点击的是否是收藏/历史目录下的项目
         parent_index = index.parent()
         is_favorite_item = False
         is_history_item = False
@@ -5398,13 +6058,13 @@ class ImageViewerWindow(QMainWindow):
                 is_history_item = True
 
         menu = Win11Menu(parent=self, is_dark=is_dark)
-
         t = TRANSLATIONS[self.lang]
+
         if is_favorite_item:
             # 收藏目录项：移除
             remove_action = QAction(
                 get_delete_icon(is_dark),
-                t['menu_remove_favorite'],
+                t["menu_remove_favorite"],
                 self,
             )
             remove_action.triggered.connect(
@@ -5415,21 +6075,20 @@ class ImageViewerWindow(QMainWindow):
             # 历史目录项：移除
             remove_action = QAction(
                 get_delete_icon(is_dark),
-                t['menu_remove_history'],
+                t["menu_remove_history"],
                 self,
             )
             remove_action.triggered.connect(lambda: self._remove_from_history(safe_dir))
             menu.addAction(remove_action)
         else:
-            # 普通目录项：添加到收藏
-            if os.path.isdir(safe_dir):
-                add_action = QAction(
-                    get_add_icon(is_dark),
-                    t['menu_add_favorite'],
-                    self,
-                )
-                add_action.triggered.connect(lambda: self._add_to_favorites(safe_dir))
-                menu.addAction(add_action)
+            # 普通目录项：添加到收藏 (减少一次磁盘检查)
+            add_action = QAction(
+                get_add_icon(is_dark),
+                t["menu_add_favorite"],
+                self,
+            )
+            add_action.triggered.connect(lambda: self._add_to_favorites(safe_dir))
+            menu.addAction(add_action)
 
         if not menu.isEmpty():
             menu.exec_(self.tree_view.viewport().mapToGlobal(position))
@@ -5474,10 +6133,10 @@ class ImageViewerWindow(QMainWindow):
             t = TRANSLATIONS[self.lang]
             reply = QMessageBox.question(
                 self,
-                t['confirm_clear'],
-                t['clear_favorites_msg'],
+                t["confirm_clear"],
+                t["clear_favorites_msg"],
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
                 self._clear_favorites()
@@ -5485,10 +6144,10 @@ class ImageViewerWindow(QMainWindow):
             t = TRANSLATIONS[self.lang]
             reply = QMessageBox.question(
                 self,
-                t['confirm_clear'],
-                t['clear_history_msg'],
+                t["confirm_clear"],
+                t["clear_history_msg"],
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
                 self._clear_history()
@@ -5499,7 +6158,7 @@ class ImageViewerWindow(QMainWindow):
         self.tree_view = QTreeView()
         self.tree_view.setModel(self.file_model)
         self.tree_view.setHeaderHidden(True)
-        
+
         t = TRANSLATIONS[self.lang]
 
         # 应用自定义样式以修正折叠箭头颜色
@@ -5507,7 +6166,7 @@ class ImageViewerWindow(QMainWindow):
 
         # 根节点：此电脑 (放在最上面)
         computer_icon = get_computer_icon(self.is_dark_theme)
-        self.computer_item = QStandardItem(computer_icon, t['this_pc'])
+        self.computer_item = QStandardItem(computer_icon, t["this_pc"])
         self.computer_item.setData("root_computer", Qt.UserRole)
         self.computer_item.setEditable(False)
         # 加载自定义字体并设置粗体 思源黑体
@@ -5525,7 +6184,9 @@ class ImageViewerWindow(QMainWindow):
         font.setBold(True)
         self.computer_item.setFont(font)
         # 初始化提示词 (根据当前主题)
-        self.computer_item.setToolTip(t['theme_tooltip_dark'] if self.is_dark_theme else t['theme_tooltip_light'])
+        self.computer_item.setToolTip(
+            t["theme_tooltip_dark"] if self.is_dark_theme else t["theme_tooltip_light"]
+        )
         self.file_model.appendRow(self.computer_item)
 
         # 加载驱动器
@@ -5534,7 +6195,7 @@ class ImageViewerWindow(QMainWindow):
         # 根节点：收藏目录 (采用 此电脑 结构)
         pin_icon = get_pin_icon(self.is_dark_theme)
 
-        self.favorites_item = QStandardItem(pin_icon, t['favorites'])
+        self.favorites_item = QStandardItem(pin_icon, t["favorites"])
         self.favorites_item.setData("root_favorites", Qt.UserRole)
         self.favorites_item.setEditable(False)
         # 使用相同的字体设置
@@ -5546,7 +6207,7 @@ class ImageViewerWindow(QMainWindow):
         # 根节点：历史目录 (采用 收藏目录 样式，时针图标)
         history_icon = get_history_icon(self.is_dark_theme)
 
-        self.history_item = QStandardItem(history_icon, t['history'])
+        self.history_item = QStandardItem(history_icon, t["history"])
         self.history_item.setData("root_history", Qt.UserRole)
         self.history_item.setEditable(False)
         # 使用相同的字体设置
@@ -5615,7 +6276,7 @@ class ImageViewerWindow(QMainWindow):
             if check_subdirs and self._has_subdirectories(dir_path):
                 # 添加虚拟子节点，支持展开子目录
                 t = TRANSLATIONS[self.lang]
-                item.appendRow(QStandardItem(t['loading']))
+                item.appendRow(QStandardItem(t["loading"]))
 
             self.favorites_item.appendRow(item)
 
@@ -5654,7 +6315,7 @@ class ImageViewerWindow(QMainWindow):
             if check_subdirs and self._has_subdirectories(dir_path):
                 # 添加虚拟子节点，支持展开子目录
                 t = TRANSLATIONS[self.lang]
-                item.appendRow(QStandardItem(t['loading']))
+                item.appendRow(QStandardItem(t["loading"]))
 
             self.history_item.appendRow(item)
 
@@ -5671,7 +6332,7 @@ class ImageViewerWindow(QMainWindow):
                 storage = QStorageInfo(drive_path)
                 name = storage.name()
                 if not name:
-                    name = t['drive_local']
+                    name = t["drive_local"]
                 # 格式化显示名称，例如 "本地磁盘 (C:)"
                 drive_letter = drive_path.strip(":/\\")
                 display_name = f"{name} ({drive_letter}:)"
@@ -5688,7 +6349,7 @@ class ImageViewerWindow(QMainWindow):
 
             # 添加虚拟子节点以显示展开箭头
             t = TRANSLATIONS[self.lang]
-            item.appendRow(QStandardItem(t['loading']))
+            item.appendRow(QStandardItem(t["loading"]))
             self.computer_item.appendRow(item)
 
     def _on_tree_expanded(self, index):
@@ -5759,7 +6420,7 @@ class ImageViewerWindow(QMainWindow):
             if should_add_dummy:
                 # 预先添加虚拟节点，以便显示展开箭头
                 t = TRANSLATIONS[self.lang]
-                item.appendRow(QStandardItem(t['loading']))
+                item.appendRow(QStandardItem(t["loading"]))
 
             parent_item.appendRow(item)
 
@@ -5788,7 +6449,7 @@ class ImageViewerWindow(QMainWindow):
                     if not tail or tail in ["/", "\\"]:
                         t = TRANSLATIONS[self.lang]
                         self.progress_label.setText(
-                            t['drive_root_msg'].format(clean_path)
+                            t["drive_root_msg"].format(clean_path)
                         )
                         # 展开该节点以便用户继续选择
                         self.tree_view.expand(index)
@@ -5809,7 +6470,9 @@ class ImageViewerWindow(QMainWindow):
             print(f"目录点击处理失败: {e}")
             traceback.print_exc()
             t = TRANSLATIONS[self.lang]
-            QMessageBox.warning(self, t['error'], t['dir_click_fail'].format(str(e)[:50]))
+            QMessageBox.warning(
+                self, t["error"], t["dir_click_fail"].format(str(e)[:50])
+            )
 
     def _safe_history_click(self, item: QListWidgetItem):
         """安全处理历史目录点击"""
@@ -5825,7 +6488,9 @@ class ImageViewerWindow(QMainWindow):
         except Exception as e:
             print(f"历史目录点击处理失败: {e}")
             t = TRANSLATIONS[self.lang]
-            QMessageBox.warning(self, t['error'], t['dir_click_fail'].format(str(e)[:50]))
+            QMessageBox.warning(
+                self, t["error"], t["dir_click_fail"].format(str(e)[:50])
+            )
 
     def _open_in_explorer(self, file_path):
         """在资源管理器中打开文件并选中"""
@@ -5839,14 +6504,16 @@ class ImageViewerWindow(QMainWindow):
 
             file_path = os.path.normpath(file_path)
             if sys.platform == "win32":
-                subprocess.Popen(["explorer", "/select,", file_path])
+                subprocess.Popen(["explorer", "/select,", file_path], creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 # macOS/Linux fallback
                 QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(file_path)))
         except Exception as e:
             print(f"Open explorer error: {e}")
             t = TRANSLATIONS[self.lang]
-            QMessageBox.warning(self, t['error'], t['open_explorer_fail'].format(str(e)[:50]))
+            QMessageBox.warning(
+                self, t["error"], t["open_explorer_fail"].format(str(e)[:50])
+            )
 
     def _rotate_image(self, path, direction):
         """旋转图片"""
@@ -5882,14 +6549,14 @@ class ImageViewerWindow(QMainWindow):
 
             # 更新内部数据缓存 (current_img_data 和 original_img_data)
             full_path = safe_path(path)
-            
+
             # 更新 current_img_data
             for item in self.current_img_data:
                 if self._paths_are_equal(item["path"], full_path):
                     item["w"] = new_w
                     item["h"] = new_h
                     break
-            
+
             # 更新 original_img_data
             if hasattr(self, "original_img_data"):
                 for item in self.original_img_data:
@@ -5913,12 +6580,12 @@ class ImageViewerWindow(QMainWindow):
         except Exception as e:
             print(f"Rotate error: {e}")
             t = TRANSLATIONS[self.lang]
-            QMessageBox.warning(self, t['error'], t['rotate_fail'].format(e))
+            QMessageBox.warning(self, t["error"], t["rotate_fail"].format(e))
 
     def _on_scan_mode_changed(self, is_recursive):
         """处理扫描模式切换（来自 Delegate 点击）"""
         self.is_recursive_mode = is_recursive  # 同步全局状态
-        
+
         if hasattr(self, "computer_item"):
             # 更新模型数据以触发重绘
             self.computer_item.setData(is_recursive, Qt.UserRole + 10)
@@ -5928,14 +6595,14 @@ class ImageViewerWindow(QMainWindow):
 
             t = TRANSLATIONS[self.lang]
             # 显示提示
-            mode_text = t['scan_mode_multi'] if is_recursive else t['scan_mode_single']
-            self.status_bar.showMessage(t['switch_mode_done'].format(mode_text), 2000)
+            mode_text = t["scan_mode_multi"] if is_recursive else t["scan_mode_single"]
+            self.status_bar.showMessage(t["switch_mode_done"].format(mode_text), 2000)
 
             # 更新状态栏左侧标签和工具栏按钮图标
-            tooltip = t['scan_mode_tooltip'].format(mode_text)
+            tooltip = t["scan_mode_tooltip"].format(mode_text)
             self.scan_mode_label.setText(mode_text)
             self.scan_mode_label.setToolTip(tooltip)
-            
+
             # 更新工具栏图标
             self._apply_complete_theme()
 
@@ -6035,9 +6702,9 @@ class ImageViewerWindow(QMainWindow):
         self.image_count = count
         t = TRANSLATIONS[self.lang]
         if count > 0:
-            self.count_label.setText(t['image_count'].format(1, count))
+            self.count_label.setText(t["image_count"].format(1, count))
         else:
-            self.count_label.setText(t['image_count'].format(0, 0))
+            self.count_label.setText(t["image_count"].format(0, 0))
 
     def _on_scan_finished(self, img_data, scan_id):
         if scan_id != self.scan_id:
@@ -6052,13 +6719,17 @@ class ImageViewerWindow(QMainWindow):
         self.current_img_data = img_data
 
         t = TRANSLATIONS[self.lang]
-        self.progress_label.setText(t['loading_count'].format(len(img_data)))
+        self.progress_label.setText(t["loading_count"].format(len(img_data)))
 
         # 2. 检查是否需要应用筛选
         search_text = self.current_search_text.strip()
         format_filter = self.current_format_filter
         size_filter = self.current_size_filter
-        filters_active = (search_text or format_filter != t['all_formats'] or size_filter != t['all_sizes'])
+        filters_active = (
+            search_text
+            or format_filter != t["all_formats"]
+            or size_filter != t["all_sizes"]
+        )
 
         if filters_active:
             # 如果有筛选，直接调用筛选逻辑，它会更新视图
@@ -6070,7 +6741,10 @@ class ImageViewerWindow(QMainWindow):
 
             if not img_data:
                 should_full_refresh = True
-            elif self.current_sort_mode != "name" and self.current_sort_mode != "name_asc":
+            elif (
+                self.current_sort_mode != "name"
+                and self.current_sort_mode != "name_asc"
+            ):
                 # 非默认排序，需要重新排序并刷新
                 should_full_refresh = True
 
@@ -6085,9 +6759,9 @@ class ImageViewerWindow(QMainWindow):
                 count = len(self.current_img_data)
                 self.image_count = count
                 t = TRANSLATIONS[self.lang]
-                self.progress_label.setText(t['scan_done'].format(count))
+                self.progress_label.setText(t["scan_done"].format(count))
                 if count > 0:
-                    self.count_label.setText(t['image_count'].format(1, count))
+                    self.count_label.setText(t["image_count"].format(1, count))
 
         # 尝试添加到历史记录
         if img_data and len(img_data) > 0:
@@ -6117,6 +6791,7 @@ class ImageViewerWindow(QMainWindow):
         if sys.platform == "win32":
             path = path.replace("/", "\\")
             from urllib.parse import unquote
+
             path = unquote(path)
 
         if not path or not os.path.exists(path):
@@ -6124,7 +6799,9 @@ class ImageViewerWindow(QMainWindow):
 
         t = TRANSLATIONS[self.lang]
         # 选择目标目录
-        target_dir = QFileDialog.getExistingDirectory(self, t['copy_target_title'], self.current_dir or "")
+        target_dir = QFileDialog.getExistingDirectory(
+            self, t["copy_target_title"], self.current_dir or ""
+        )
         if not target_dir:
             return
 
@@ -6134,15 +6811,20 @@ class ImageViewerWindow(QMainWindow):
 
             # 检查同名文件
             if os.path.exists(dest_path):
-                reply = QMessageBox.question(self, t['overwrite_title'], t['overwrite_msg'].format(filename),
-                                           QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                reply = QMessageBox.question(
+                    self,
+                    t["overwrite_title"],
+                    t["overwrite_msg"].format(filename),
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
                 if reply == QMessageBox.No:
                     return
 
             shutil.copy2(path, dest_path)
-            QMessageBox.information(self, t['success'], t['copy_success'])
+            QMessageBox.information(self, t["success"], t["copy_success"])
         except Exception as e:
-            QMessageBox.critical(self, t['error'], t['copy_fail'].format(e))
+            QMessageBox.critical(self, t["error"], t["copy_fail"].format(e))
 
     def _move_image(self, path):
         """移动图片到..."""
@@ -6152,6 +6834,7 @@ class ImageViewerWindow(QMainWindow):
         if sys.platform == "win32":
             path = path.replace("/", "\\")
             from urllib.parse import unquote
+
             path = unquote(path)
 
         if not path or not os.path.exists(path):
@@ -6159,7 +6842,9 @@ class ImageViewerWindow(QMainWindow):
 
         t = TRANSLATIONS[self.lang]
         # 选择目标目录
-        target_dir = QFileDialog.getExistingDirectory(self, t['move_target_title'], self.current_dir or "")
+        target_dir = QFileDialog.getExistingDirectory(
+            self, t["move_target_title"], self.current_dir or ""
+        )
         if not target_dir:
             return
 
@@ -6169,8 +6854,13 @@ class ImageViewerWindow(QMainWindow):
 
             # 检查同名文件
             if os.path.exists(dest_path):
-                reply = QMessageBox.question(self, t['overwrite_title'], t['overwrite_msg'].format(filename),
-                                           QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                reply = QMessageBox.question(
+                    self,
+                    t["overwrite_title"],
+                    t["overwrite_msg"].format(filename),
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
                 if reply == QMessageBox.No:
                     return
 
@@ -6179,22 +6869,24 @@ class ImageViewerWindow(QMainWindow):
             # 更新显示
             full_path = safe_path(path)
             self.current_img_data = [
-                img for img in self.current_img_data
+                img
+                for img in self.current_img_data
                 if not self._paths_are_equal(img["path"], full_path)
             ]
-            
+
             # 同时更新原始数据
             if hasattr(self, "original_img_data"):
                 self.original_img_data = [
-                    img for img in self.original_img_data
+                    img
+                    for img in self.original_img_data
                     if not self._paths_are_equal(img["path"], full_path)
                 ]
-                
+
             self._update_web_view_images()
 
-            QMessageBox.information(self, t['success'], t['move_success'])
+            QMessageBox.information(self, t["success"], t["move_success"])
         except Exception as e:
-            QMessageBox.critical(self, t['error'], t['move_fail'].format(e))
+            QMessageBox.critical(self, t["error"], t["move_fail"].format(e))
 
     def _delete_image(self, path):
         """删除图片"""
@@ -6218,8 +6910,8 @@ class ImageViewerWindow(QMainWindow):
         # 确认对话框
         reply = QMessageBox.question(
             self,
-            t['delete_confirm_title'],
-            t['delete_confirm_msg'].format(os.path.basename(path)),
+            t["delete_confirm_title"],
+            t["delete_confirm_msg"].format(os.path.basename(path)),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -6237,7 +6929,7 @@ class ImageViewerWindow(QMainWindow):
                         for img in self.current_img_data
                         if not self._paths_are_equal(img["path"], full_path)
                     ]
-                    
+
                     # 同时从原始数据中移除
                     if hasattr(self, "original_img_data"):
                         self.original_img_data = [
@@ -6245,20 +6937,20 @@ class ImageViewerWindow(QMainWindow):
                             for img in self.original_img_data
                             if not self._paths_are_equal(img["path"], full_path)
                         ]
-                    
+
                     new_count = len(self.current_img_data)
 
                     # 刷新显示
                     self._update_web_view_images()
                 else:
-                    QMessageBox.warning(self, t['error'], t['file_not_exist'])
+                    QMessageBox.warning(self, t["error"], t["file_not_exist"])
                     # 即使文件不存在，也尝试从列表中移除
                     self.current_img_data = [
                         img
                         for img in self.current_img_data
                         if not self._paths_are_equal(img["path"], full_path)
                     ]
-                    #同时从原始数据中移除
+                    # 同时从原始数据中移除
                     if hasattr(self, "original_img_data"):
                         self.original_img_data = [
                             img
@@ -6268,7 +6960,7 @@ class ImageViewerWindow(QMainWindow):
                     self._update_web_view_images()
 
             except Exception as e:
-                QMessageBox.critical(self, t['error'], t['delete_fail'].format(e))
+                QMessageBox.critical(self, t["error"], t["delete_fail"].format(e))
 
     def _refresh_images(self):
         """刷新当前目录"""
@@ -6371,11 +7063,11 @@ class ImageViewerWindow(QMainWindow):
             count = len(self.current_img_data)
             self.image_count = count
             t = TRANSLATIONS[self.lang]
-            self.progress_label.setText(t['scan_done'].format(count))
+            self.progress_label.setText(t["scan_done"].format(count))
             if count > 0:
-                self.count_label.setText(t['image_count'].format(1, count))
+                self.count_label.setText(t["image_count"].format(1, count))
             else:
-                self.count_label.setText(t['image_count'].format(0, 0))
+                self.count_label.setText(t["image_count"].format(0, 0))
         except Exception as e:
             traceback.print_exc()
 
@@ -6778,8 +7470,7 @@ class ImageViewerWindow(QMainWindow):
                 QLabel {
                     color: #ffffff;
                 }
-            """
-            )
+            """)
             # 更新特定标签颜色
             if hasattr(self, "size_label"):
                 self.size_label.setStyleSheet("padding: 0 10px; color: #ffffff;")
@@ -6799,8 +7490,7 @@ class ImageViewerWindow(QMainWindow):
                 QLabel {
                     color: #000000;
                 }
-            """
-            )
+            """)
             # 更新特定标签颜色
             if hasattr(self, "size_label"):
                 self.size_label.setStyleSheet("padding: 0 10px; color: #000000;")
@@ -6810,12 +7500,12 @@ class ImageViewerWindow(QMainWindow):
         # 获取资源绝对路径
         base_dir = os.path.dirname(os.path.abspath(__file__))
         res_dir = os.path.join(base_dir, "resources").replace("\\", "/")
-        
+
         if self.is_dark_theme:
             # 暗黑模式
             self.toolbar.setStyleSheet("background-color: #1e1e1e;")
             label_style = "QLabel { color: #e0e0e0; }"
-            
+
             # 使用说明按钮样式
             help_btn_style = """
                 QPushButton {
@@ -6828,7 +7518,7 @@ class ImageViewerWindow(QMainWindow):
                     background-color: rgba(255, 255, 255, 20);
                 }
             """
-            
+
             lang_combo_style = """
                 QComboBox#langCombo {
                     background-color: transparent;
@@ -6858,12 +7548,12 @@ class ImageViewerWindow(QMainWindow):
                     min-width: 44px;
                 }
             """
-            
+
         else:
             # 亮色模式
             self.toolbar.setStyleSheet("background-color: #f8f9fa;")
             label_style = "QLabel { color: #495057; }"
-            
+
             # 使用说明按钮样式
             help_btn_style = """
                 QPushButton {
@@ -6913,19 +7603,20 @@ class ImageViewerWindow(QMainWindow):
             self.skin_btn.setStyleSheet(help_btn_style)
         if hasattr(self, "lang_combo"):
             self.lang_combo.setStyleSheet(lang_combo_style)
-        
+
         # 更新 QLabel 颜色
         for child in self.toolbar.children():
             if isinstance(child, QLabel):
                 child.setStyleSheet(label_style)
-
 
     def _on_skin_clicked(self):
         """显示皮肤切换菜单"""
         menu = Win11Menu(parent=self, is_dark=self.is_dark_theme)
         t = TRANSLATIONS.get(self.lang, TRANSLATIONS["zh"])
         menu.setFixedWidth(64)
-        checked_bg = "rgba(255, 255, 255, 25)" if self.is_dark_theme else "rgba(0, 0, 0, 15)"
+        checked_bg = (
+            "rgba(255, 255, 255, 25)" if self.is_dark_theme else "rgba(0, 0, 0, 15)"
+        )
         menu.setStyleSheet(
             menu.styleSheet()
             + f"""
@@ -6942,28 +7633,30 @@ class ImageViewerWindow(QMainWindow):
             }}
             """
         )
-        
+
         # 定义皮肤选项
         skins = [
             ("blue", t.get("theme_blue", "蓝色")),
             ("red", t.get("theme_red", "红色")),
-            ("green", t.get("theme_green", "绿色"))
+            ("green", t.get("theme_green", "绿色")),
         ]
-        
+
         for theme_id, theme_name in skins:
             action = QAction("", menu)
             action.setIcon(_get_tshirt_icon(THEME_COLORS[theme_id]["normal"]))
             action.setToolTip(theme_name)
-            
+
             # 标记当前选中
             if CURRENT_THEME_COLOR == theme_id:
                 action.setCheckable(True)
                 action.setChecked(True)
-            
+
             # 使用闭包绑定参数
-            action.triggered.connect(lambda checked, tid=theme_id: self._on_skin_changed(tid))
+            action.triggered.connect(
+                lambda checked, tid=theme_id: self._on_skin_changed(tid)
+            )
             menu.addAction(action)
-            
+
         # 在按钮下方显示菜单
         menu.exec_(self.skin_btn.mapToGlobal(QPoint(0, self.skin_btn.height())))
 
@@ -6972,20 +7665,26 @@ class ImageViewerWindow(QMainWindow):
         global CURRENT_THEME_COLOR
         if CURRENT_THEME_COLOR == theme_id:
             return
-            
+
         CURRENT_THEME_COLOR = theme_id
         self.settings.setValue("theme_color", theme_id)
-        
+
+        # 清空图标缓存，因为皮肤颜色变了
+        global _icon_cache
+        _icon_cache.clear()
+
         # 刷新所有图标
         self._refresh_all_icons()
-        
+
         # 同步更新 Web 端皮肤颜色
         theme_info = THEME_COLORS.get(theme_id, THEME_COLORS["blue"])
         skin_color = theme_info["normal"]
-        
-        if hasattr(self, 'web_view') and self.web_view:
-            self.web_view.page().runJavaScript(f"if (typeof setSkinColor === 'function') {{ setSkinColor('{skin_color}'); }}")
-        
+
+        if hasattr(self, "web_view") and self.web_view:
+            self.web_view.page().runJavaScript(
+                f"if (typeof setSkinColor === 'function') {{ setSkinColor('{skin_color}'); }}"
+            )
+
         # 如果预览窗口在 main_view 中被使用 (虽然 ImageViewerWindow 是 main，但预览可能指弹窗)
         # 检查是否有关联的预览窗口逻辑
         # 在这个应用中，预览窗口似乎是 ImageViewerWindow 的一个实例，或者是 main window
@@ -6995,22 +7694,22 @@ class ImageViewerWindow(QMainWindow):
     def _refresh_all_icons(self):
         """刷新 UI 中所有受皮肤颜色影响的图标"""
         # 1. 顶部工具栏按钮
-        if hasattr(self, 'skin_btn'):
+        if hasattr(self, "skin_btn"):
             self.skin_btn.update_icon()
-        if hasattr(self, 'lang_combo'):
+        if hasattr(self, "lang_combo"):
             self.lang_combo.update_icon()
-        if hasattr(self, 'help_btn'):
+        if hasattr(self, "help_btn"):
             self.help_btn.update_icon()
-        
+
         # 2. 树状图图标（包含根节点与所有子节点）
         self._refresh_tree_icons()
-            
+
         # 3. 分割窗口中的图标（排序、布局、操作按钮）
-        if hasattr(self, 'splitter'):
+        if hasattr(self, "splitter"):
             self.splitter.refresh_icons()
-            
+
         # 4. 树状图 Delegate 中的图标（扫描模式、清除按钮等）
-        if hasattr(self, 'tree_view'):
+        if hasattr(self, "tree_view"):
             self.tree_view.viewport().update()
 
     def _refresh_tree_icons(self):
@@ -7048,6 +7747,7 @@ class ImageViewerWindow(QMainWindow):
             top = self.file_model.item(i)
             if top is not None:
                 refresh_item_icons(top)
+
 
 # ========== 主程序入口（修复无控制台环境崩溃） ==========
 if __name__ == "__main__":
@@ -7121,7 +7821,9 @@ if __name__ == "__main__":
         from PyQt5.QtGui import QFontDatabase, QFont
 
         # 加载 SourceHanSans-Normal 作为默认字体
-        font_path = resource_path("resources/SourceHanSans-Normal.ttc").replace("\\", "/")
+        font_path = resource_path("resources/SourceHanSans-Normal.ttc").replace(
+            "\\", "/"
+        )
         if os.path.exists(font_path):
             fid = QFontDatabase.addApplicationFont(font_path)
             if fid != -1:
