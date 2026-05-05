@@ -1,0 +1,58 @@
+"""
+PicSee Icon System - 使用 Lucide 图标
+所有图标函数已迁移到 lucide_icons.py
+此文件保留向后兼容
+"""
+from .lucide_icons import (
+    get_sort_icon,
+    get_refresh_icon,
+    get_layout_icon,
+    get_delete_icon,
+    get_add_icon,
+    get_clear_icon,
+    get_folder_icon,
+    get_computer_icon,
+    get_pin_icon,
+    get_history_icon,
+    get_rotate_icon,
+    get_copy_move_icon,
+    get_asc_desc_icon,
+    get_scan_mode_icon,
+    get_clear_action_icon,
+    get_sidebar_toggle_icon,
+    get_layout_type_icon,
+    get_size_icon,
+    get_format_icon,
+    get_help_icon,
+    get_lang_icon,
+    get_skin_icon,
+    get_search_btn_icon,
+    LUCIDE_AVAILABLE,
+)
+
+__all__ = [
+    'get_sort_icon',
+    'get_refresh_icon',
+    'get_layout_icon',
+    'get_delete_icon',
+    'get_add_icon',
+    'get_clear_icon',
+    'get_folder_icon',
+    'get_computer_icon',
+    'get_pin_icon',
+    'get_history_icon',
+    'get_rotate_icon',
+    'get_copy_move_icon',
+    'get_asc_desc_icon',
+    'get_scan_mode_icon',
+    'get_clear_action_icon',
+    'get_sidebar_toggle_icon',
+    'get_layout_type_icon',
+    'get_size_icon',
+    'get_format_icon',
+    'get_help_icon',
+    'get_lang_icon',
+    'get_skin_icon',
+    'get_search_btn_icon',
+    'LUCIDE_AVAILABLE',
+]

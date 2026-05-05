@@ -1,0 +1,9 @@
+PyQt5
+PyQtWebEngine
+Pillow
+send2trash
+python-lucide
+
+# Lucide 图标系统依赖
+# 提供 1000+ 矢量 SVG 图标
+# https://github.com/mmacpherson/python-lucide

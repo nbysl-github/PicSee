@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Linter
+.ruff_cache/
+
+# Build
+build/
+dist/
+*.spec.bak
+
+# Installer output
+installer/
+
+# Backup
+backup/
+*.rar
+*.zip
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.log
+*.tmp
+clear_picsee_data.py
+*.txt
+!requirements.txt
